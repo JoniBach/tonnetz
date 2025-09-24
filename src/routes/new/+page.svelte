@@ -16,9 +16,16 @@
 		innerTriangle: {
 			size: 80, // Size of inner triangles (independent of grid)
 			strokeWidth: 0.2,
-			strokeColor: '#444',
+			strokeColor: '#222',
 			fillColor: '#111',
 			opacity: 0.8
+		},
+		innerCircle: {
+			diameter: 20, // Size of inner circles (independent of vertex size)
+			strokeWidth: 0.2,
+			strokeColor: '#222',
+			fillColor: '#111',
+			opacity: 0.9
 		},
 		background: '#1a1a1a'
 	} as const;
@@ -74,12 +81,14 @@
 
 	function createTriangularGrid() {
 		gridGroup.selectAll('*').remove();
-		const [triangles, vertices, innerTriangles] = [
+		const [triangles, vertices, innerTriangles, innerCircles] = [
+			gridGroup.append('g'),
 			gridGroup.append('g'),
 			gridGroup.append('g'),
 			gridGroup.append('g')
 		];
 		const uniqueVertices = new Set<string>();
+		const vertexPositions: { x: number; y: number }[] = [];
 
 		for (let row = -CONFIG.gridExtent; row < CONFIG.gridExtent; row++) {
 			for (let col = -CONFIG.gridExtent; col < CONFIG.gridExtent; col++) {
@@ -92,6 +101,7 @@
 					if (!uniqueVertices.has(key)) {
 						uniqueVertices.add(key);
 						createVertex(vertices, v);
+						vertexPositions.push(v);
 					}
 				});
 
@@ -99,6 +109,11 @@
 				createInnerTriangle(innerTriangles, pos, isUp);
 			}
 		}
+
+		// Create inner circles at all vertex positions
+		vertexPositions.forEach((pos) => {
+			createInnerCircle(innerCircles, pos);
+		});
 	}
 
 	function createTriangle(
@@ -190,6 +205,21 @@
 			.attr('stroke', CONFIG.innerTriangle.strokeColor)
 			.attr('stroke-width', CONFIG.innerTriangle.strokeWidth)
 			.attr('opacity', CONFIG.innerTriangle.opacity);
+	}
+
+	function createInnerCircle(
+		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
+		pos: { x: number; y: number }
+	) {
+		parent
+			.append('circle')
+			.attr('cx', pos.x)
+			.attr('cy', pos.y)
+			.attr('r', CONFIG.innerCircle.diameter / 2)
+			.attr('fill', CONFIG.innerCircle.fillColor)
+			.attr('stroke', CONFIG.innerCircle.strokeColor)
+			.attr('stroke-width', CONFIG.innerCircle.strokeWidth)
+			.attr('opacity', CONFIG.innerCircle.opacity);
 	}
 </script>
 
