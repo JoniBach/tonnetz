@@ -13,6 +13,13 @@
 		zoomRange: 2,
 		triangle: { strokeWidth: 0.3, strokeColor: '#333', opacity: 1 },
 		vertex: { diameter: 30, color: '#1a1a1a', opacity: 1 },
+		innerTriangle: {
+			size: 80, // Size of inner triangles (independent of grid)
+			strokeWidth: 0.2,
+			strokeColor: '#444',
+			fillColor: '#111',
+			opacity: 0.8
+		},
 		background: '#1a1a1a'
 	} as const;
 
@@ -67,7 +74,11 @@
 
 	function createTriangularGrid() {
 		gridGroup.selectAll('*').remove();
-		const [triangles, vertices] = [gridGroup.append('g'), gridGroup.append('g')];
+		const [triangles, vertices, innerTriangles] = [
+			gridGroup.append('g'),
+			gridGroup.append('g'),
+			gridGroup.append('g')
+		];
 		const uniqueVertices = new Set<string>();
 
 		for (let row = -CONFIG.gridExtent; row < CONFIG.gridExtent; row++) {
@@ -75,6 +86,7 @@
 				const pos = { x: col * spacing.col, y: row * spacing.row };
 				const isUp = (row + col) % 2 === 0;
 
+				// Create grid triangle
 				createTriangle(triangles, pos, isUp).forEach((v) => {
 					const key = `${v.x.toFixed(2)},${v.y.toFixed(2)}`;
 					if (!uniqueVertices.has(key)) {
@@ -82,6 +94,9 @@
 						createVertex(vertices, v);
 					}
 				});
+
+				// Create inner triangle at the center of the grid space
+				createInnerTriangle(innerTriangles, pos, isUp);
 			}
 		}
 	}
@@ -127,6 +142,54 @@
 			.attr('r', CONFIG.vertex.diameter / 2)
 			.attr('fill', CONFIG.vertex.color)
 			.attr('opacity', CONFIG.vertex.opacity);
+	}
+
+	function createInnerTriangle(
+		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
+		gridPos: { x: number; y: number },
+		gridUp: boolean
+	) {
+		// Use the EXACT same vertex calculation as createTriangle to ensure consistency
+		const { x, y } = gridPos;
+		const gridHalf = CONFIG.baseTriangleSize / 2;
+
+		// Get the exact same vertices as the grid triangle
+		const gridVertices = gridUp
+			? [
+					{ x, y }, // tip
+					{ x: x - gridHalf, y: y + triangleHeight }, // bottom left
+					{ x: x + gridHalf, y: y + triangleHeight } // bottom right
+				]
+			: [
+					{ x: x - gridHalf, y }, // top left
+					{ x: x + gridHalf, y }, // top right
+					{ x, y: y + triangleHeight } // bottom tip
+				];
+
+		// Calculate centroid (geometric center)
+		const centerX = (gridVertices[0].x + gridVertices[1].x + gridVertices[2].x) / 3;
+		const centerY = (gridVertices[0].y + gridVertices[1].y + gridVertices[2].y) / 3;
+
+		// Create inner triangle vertices centered at the centroid
+		const innerHalf = CONFIG.innerTriangle.size / 2;
+		const innerHeight = (CONFIG.innerTriangle.size * Math.sqrt(3)) / 2;
+
+		// Create inner triangle with same proportional positioning as grid triangle
+		// but scaled down and centered at the centroid
+		const scale = CONFIG.innerTriangle.size / CONFIG.baseTriangleSize;
+
+		const innerVertices = gridVertices.map((vertex) => ({
+			x: centerX + (vertex.x - centerX) * scale,
+			y: centerY + (vertex.y - centerY) * scale
+		}));
+
+		parent
+			.append('polygon')
+			.attr('points', innerVertices.map((v) => `${v.x},${v.y}`).join(' '))
+			.attr('fill', CONFIG.innerTriangle.fillColor)
+			.attr('stroke', CONFIG.innerTriangle.strokeColor)
+			.attr('stroke-width', CONFIG.innerTriangle.strokeWidth)
+			.attr('opacity', CONFIG.innerTriangle.opacity);
 	}
 </script>
 
