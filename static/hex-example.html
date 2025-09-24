@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Hex Grid Tonnetz</title>
+<style>
+  body { font-family: sans-serif; text-align: center; }
+  svg { background: #f9f9f9; margin-top: 1rem; }
+  text { font-size: 12px; font-weight: bold; pointer-events: none; }
+  polygon { fill: #cce5ff; stroke: #333; stroke-width: 1; }
+</style>
+</head>
+<body>
+
+<h2>Hex Grid of Notes</h2>
+<label>
+  Root:
+  <select id="rootSelect">
+    <option value="0">C</option>
+    <option value="1">C# / Db</option>
+    <option value="2">D</option>
+    <option value="3">D# / Eb</option>
+    <option value="4">E</option>
+    <option value="5">F</option>
+    <option value="6">F# / Gb</option>
+    <option value="7">G</option>
+    <option value="8">G# / Ab</option>
+    <option value="9">A</option>
+    <option value="10">A# / Bb</option>
+    <option value="11">B</option>
+  </select>
+</label>
+
+<div id="grid"></div>
+
+<script>
+// --- Helpers ---
+const mod = (n, m = 12) => ((n % m) + m) % m;
+
+function pitchClass(q, r, root = 0) {
+  return mod(root + 7*q + 4*r, 12);
+}
+
+function pcToName(pc, flats = false) {
+  const sharps = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+  const flatsArr = ["C","Db","D","Eb","E","F","Gb","G","Ab","A","Bb","B"];
+  return flats ? flatsArr[pc] : sharps[pc];
+}
+
+// axial hex coords -> cartesian
+function hexToXY(q, r, size) {
+  const x = size * (q + r/2);
+  const y = size * Math.sqrt(3)/2 * r;
+  return [x, y];
+}
+
+// draw a single hex at (x,y)
+function hexPoints(x, y, size) {
+  const pts = [];
+  for (let i=0; i<6; i++) {
+    const angle = Math.PI/3 * i + Math.PI/6; // pointy top
+    const px = x + size * Math.cos(angle);
+    const py = y + size * Math.sin(angle);
+    pts.push(`${px},${py}`);
+  }
+  return pts.join(" ");
+}
+
+// --- Draw grid ---
+function drawGrid(root=0) {
+  const size = 40;  // hex size
+  const range = 3;  // grid radius
+  let svg = `<svg width="500" height="500" viewBox="-150 -150 300 300">`;
+
+  for (let q=-range; q<=range; q++) {
+    for (let r=-range; r<=range; r++) {
+      if (Math.abs(q+r) <= range) {
+        const [x,y] = hexToXY(q,r,size);
+        const pc = pitchClass(q,r,root);
+        const note = pcToName(pc);
+        svg += `<polygon points="${hexPoints(x,y,size-2)}" />`;
+        svg += `<text x="${x}" y="${y+4}" text-anchor="middle">${note}</text>`;
+      }
+    }
+  }
+  svg += `</svg>`;
+  document.getElementById("grid").innerHTML = svg;
+}
+
+// initial draw
+drawGrid(0);
+
+// root selector
+document.getElementById("rootSelect").addEventListener("change", e => {
+  drawGrid(parseInt(e.target.value));
+});
+</script>
+</body>
+</html>

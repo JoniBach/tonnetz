@@ -36,8 +36,21 @@
 			color: '#555',
 			fontFamily: 'Arial, sans-serif'
 		},
+		music: {
+			rootNote: 'C', // Configurable root note
+			showMusicalLabels: true // Toggle between musical and coordinate labels
+		},
 		background: '#1a1a1a'
-	} as const;
+	};
+
+	// Reactive variables for dynamic configuration
+	let currentRootNote = CONFIG.music.rootNote;
+	let showMusicalLabels = false; // Debug with coordinates first
+
+	// Reactive statement to update grid when root note changes
+	$: if (svg && (currentRootNote || showMusicalLabels !== undefined)) {
+		updateViewport(currentTransform);
+	}
 
 	// Computed constants
 	const triangleHeight = (CONFIG.baseTriangleSize * Math.sqrt(3)) / 2;
@@ -112,6 +125,34 @@
 		return screenPos[0] > -buffer && screenPos[0] < width + buffer && screenPos[1] > -buffer && screenPos[1] < height + buffer;
 	};
 
+	// Tonnetz Mathematical Formula Implementation
+	// Based on: Pitch(q, r; root) = (root + 7q + 4r) mod 12
+	
+	const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+	const NOTE_TO_SEMITONE = Object.fromEntries(NOTES.map((note, i) => [note, i]));
+
+	// Safe modulo function (handles negative numbers correctly)
+	const mod = (n: number, m: number = 12) => ((n % m) + m) % m;
+
+	// Core tonnetz function: compute pitch class from lattice coordinates
+	function pitchClass(q: number, r: number, root: number = 0): number {
+		return mod(root + 7 * q + 4 * r, 12);
+	}
+
+	// Convert pitch class number to note name
+	function pcToName(pc: number, preferFlats: boolean = false): string {
+		const sharps = NOTES;
+		const flats = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+		return preferFlats ? flats[mod(pc, 12)] : sharps[mod(pc, 12)];
+	}
+
+	// Get note from tonnetz coordinates with configurable root
+	function getNoteFromTonnetzCoords(q: number, r: number, rootNote: string = 'C'): string {
+		const rootSemitone = NOTE_TO_SEMITONE[rootNote];
+		const pc = pitchClass(q, r, rootSemitone);
+		return pcToName(pc);
+	}
+
 	function createGrid() {
 		updateViewport(currentTransform);
 	}
@@ -125,17 +166,30 @@
 		const uniqueVertices = new Set<string>();
 		const vertexPositions: { x: number; y: number; label: string }[] = [];
 
-		// Render base template (always visible)
+		// Render triangles and extract their vertices with proper tonnetz mapping
 		for (let row = -CONFIG.gridExtent; row < CONFIG.gridExtent; row++) {
 			for (let col = -CONFIG.gridExtent; col < CONFIG.gridExtent; col++) {
 				const pos = { x: col * spacing.col, y: row * spacing.row };
 				const isUp = (row + col) % 2 === 0;
+				
+				// Create triangles
 				createTriangleWithHover(triangles, innerTriangles, pos, isUp, row, col).forEach((v, index) => {
 					const key = `${v.x.toFixed(2)},${v.y.toFixed(2)}`;
 					if (!uniqueVertices.has(key)) {
 						uniqueVertices.add(key);
-						// Create a simple label based on grid position
-						const vertexLabel = `${Math.round(v.x / spacing.col)},${Math.round(v.y / spacing.row)}`;
+						
+						// Simple coordinate mapping to understand the pattern
+						const gridX = Math.round(v.x / spacing.col);
+						const gridY = Math.round(v.y / spacing.row);
+						
+						let vertexLabel: string;
+						if (showMusicalLabels) {
+							// For now, just use gridX as q coordinate (horizontal = fifths)
+							vertexLabel = getNoteFromTonnetzCoords(gridX, 0, currentRootNote);
+						} else {
+							vertexLabel = `${gridX},${gridY}`;
+						}
+						
 						createVertexWithHover(vertices, innerCircles, v);
 						createVertexLabel(vertexLabels, v, vertexLabel);
 						vertexPositions.push({ ...v, label: vertexLabel });
@@ -339,6 +393,23 @@
 	}
 </script>
 
+<!-- Control Panel -->
+<div class="control-panel">
+	<label>
+		Root Note:
+		<select bind:value={currentRootNote}>
+			{#each NOTES as note}
+				<option value={note}>{note}</option>
+			{/each}
+		</select>
+	</label>
+	
+	<label>
+		<input type="checkbox" bind:checked={showMusicalLabels} />
+		Show Musical Labels
+	</label>
+</div>
+
 <div bind:this={container} class="tonnetz-container">
 	<!-- SVG will be appended here by D3 -->
 </div>
@@ -349,6 +420,42 @@
 		padding: 0;
 		overflow: hidden;
 		background: var(--bg-color);
+	}
+
+	.control-panel {
+		position: fixed;
+		top: 20px;
+		left: 20px;
+		z-index: 1000;
+		background: rgba(0, 0, 0, 0.8);
+		padding: 15px;
+		border-radius: 8px;
+		color: white;
+		font-family: Arial, sans-serif;
+		font-size: 14px;
+		display: flex;
+		gap: 20px;
+		align-items: center;
+	}
+
+	.control-panel label {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		cursor: pointer;
+	}
+
+	.control-panel select {
+		padding: 4px 8px;
+		border-radius: 4px;
+		border: 1px solid #555;
+		background: #333;
+		color: white;
+		font-size: 14px;
+	}
+
+	.control-panel input[type="checkbox"] {
+		transform: scale(1.2);
 	}
 
 	.tonnetz-container {

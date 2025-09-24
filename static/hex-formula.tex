@@ -1,0 +1,14 @@
+\[
+\text{Pitch}(q, r; \text{root}) = (\text{root} + 7q + 4r) \bmod 12
+\]
+Definitions
+
+(q, r) = integer lattice coordinates (two independent directions in the hex grid)
+
+root = pitch class of the origin (0 = C, 1 = C♯/D♭, …, 11 = B)
+
+7 = semitone offset for moving one step in the “fifths” direction (perfect fifth = +7 semitones)
+
+4 = semitone offset for moving one step in the “major third” direction (major third = +4 semitones)
+
+The implicit third direction (q − r) corresponds to minor thirds (7 − 4 = 3 semitones)
