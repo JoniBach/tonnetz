@@ -39,12 +39,12 @@
 		background: '#1a1a1a'
 	} as const;
 
+	// Computed constants
 	const triangleHeight = (CONFIG.baseTriangleSize * Math.sqrt(3)) / 2;
 	const spacing = { row: triangleHeight, col: CONFIG.baseTriangleSize / 2 };
-	const gridBounds = {
-		width: CONFIG.gridExtent * 2 * spacing.col,
-		height: CONFIG.gridExtent * 2 * spacing.row
-	};
+	const gridBounds = { width: CONFIG.gridExtent * spacing.col, height: CONFIG.gridExtent * spacing.row };
+	const half = CONFIG.baseTriangleSize / 2;
+	const scale = CONFIG.innerTriangle.size / CONFIG.baseTriangleSize;
 
 	onMount(() => {
 		const [width, height] = [window.innerWidth, window.innerHeight];
@@ -56,6 +56,10 @@
 			.attr('width', width)
 			.attr('height', height)
 			.style('background', CONFIG.background)
+			.style('user-select', 'none')
+			.style('-webkit-user-select', 'none')
+			.style('-moz-user-select', 'none')
+			.style('-ms-user-select', 'none')
 			.call(zoom)
 			.on('contextmenu', (e: Event) => e.preventDefault());
 
@@ -88,6 +92,26 @@
 	let viewportUpdateTimeout: ReturnType<typeof setTimeout>;
 	let currentTransform: d3.ZoomTransform = d3.zoomIdentity;
 
+	// Utility functions
+	const getTriangleVertices = (pos: { x: number; y: number }, up: boolean) => {
+		const { x, y } = pos;
+		return up
+			? [{ x, y }, { x: x - half, y: y + triangleHeight }, { x: x + half, y: y + triangleHeight }]
+			: [{ x: x - half, y }, { x: x + half, y }, { x, y: y + triangleHeight }];
+	};
+
+	const getCentroid = (vertices: { x: number; y: number }[]) => ({
+		x: (vertices[0].x + vertices[1].x + vertices[2].x) / 3,
+		y: (vertices[0].y + vertices[1].y + vertices[2].y) / 3
+	});
+
+	const isVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform, bufferSize: number) => {
+		const screenPos = transform.apply([pos.x, pos.y]);
+		const [width, height] = [window.innerWidth, window.innerHeight];
+		const buffer = bufferSize * transform.k;
+		return screenPos[0] > -buffer && screenPos[0] < width + buffer && screenPos[1] > -buffer && screenPos[1] < height + buffer;
+	};
+
 	function createGrid() {
 		updateViewport(currentTransform);
 	}
@@ -105,13 +129,14 @@
 		for (let row = -CONFIG.gridExtent; row < CONFIG.gridExtent; row++) {
 			for (let col = -CONFIG.gridExtent; col < CONFIG.gridExtent; col++) {
 				const pos = { x: col * spacing.col, y: row * spacing.row };
-				createTriangle(triangles, pos, (row + col) % 2 === 0).forEach((v, index) => {
+				const isUp = (row + col) % 2 === 0;
+				createTriangleWithHover(triangles, innerTriangles, pos, isUp, row, col).forEach((v, index) => {
 					const key = `${v.x.toFixed(2)},${v.y.toFixed(2)}`;
 					if (!uniqueVertices.has(key)) {
 						uniqueVertices.add(key);
 						// Create a simple label based on grid position
 						const vertexLabel = `${Math.round(v.x / spacing.col)},${Math.round(v.y / spacing.row)}`;
-						createVertex(vertices, v);
+						createVertexWithHover(vertices, innerCircles, v);
 						createVertexLabel(vertexLabels, v, vertexLabel);
 						vertexPositions.push({ ...v, label: vertexLabel });
 					}
@@ -119,36 +144,23 @@
 			}
 		}
 
-		// Render detail features (culled)
+		// Render detail features (culled) - labels only, inner triangles on hover
 		const viewBounds = getVisibleBounds(transform);
 		for (let row = viewBounds.minRow; row <= viewBounds.maxRow; row++) {
 			for (let col = viewBounds.minCol; col <= viewBounds.maxCol; col++) {
 				const pos = { x: col * spacing.col, y: row * spacing.row };
 				const isUp = (row + col) % 2 === 0;
 				if (isTriangleVisible(pos, transform)) {
-					createInnerTriangle(innerTriangles, pos, isUp);
 					createLabel(labels, pos, isUp, `${row},${col}`, isUp ? 'UP' : 'DOWN');
 				}
 			}
 		}
 
-		// Render visible inner circles
-		vertexPositions
-			.filter((pos) => isVertexVisible(pos, transform))
-			.forEach((pos) => createInnerCircle(innerCircles, pos));
+		// Inner circles will be created on hover, not here
 	}
 
-	const isVertexVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform) => {
-		const screenPos = transform.apply([pos.x, pos.y]);
-		const [width, height] = [window.innerWidth, window.innerHeight];
-		const buffer = CONFIG.vertex.diameter * transform.k;
-		return (
-			screenPos[0] > -buffer &&
-			screenPos[0] < width + buffer &&
-			screenPos[1] > -buffer &&
-			screenPos[1] < height + buffer
-		);
-	};
+	const isVertexVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform) => 
+		isVisible(pos, transform, CONFIG.vertex.diameter);
 
 	function getVisibleBounds(transform: d3.ZoomTransform) {
 		const [width, height] = [window.innerWidth, window.innerHeight];
@@ -169,62 +181,111 @@
 		};
 	}
 
-	function isTriangleVisible(pos: { x: number; y: number }, transform: d3.ZoomTransform): boolean {
-		const [width, height] = [window.innerWidth, window.innerHeight];
-		const screenPos = transform.apply([pos.x, pos.y]);
-		const triangleScreenSize = CONFIG.baseTriangleSize * transform.k;
+	const isTriangleVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform) => 
+		isVisible(pos, transform, CONFIG.baseTriangleSize);
 
-		// Check if triangle bounds intersect with screen bounds (with buffer)
-		const buffer = triangleScreenSize;
-		return (
-			screenPos[0] > -buffer &&
-			screenPos[0] < width + buffer &&
-			screenPos[1] > -buffer &&
-			screenPos[1] < height + buffer
-		);
-	}
+	// Remove unused createTriangle function - using createTriangleWithHover instead
 
-	function createTriangle(
-		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
+	function createTriangleWithHover(
+		triangleParent: d3.Selection<SVGGElement, unknown, null, undefined>,
+		innerTriangleParent: d3.Selection<SVGGElement, unknown, null, undefined>,
 		pos: { x: number; y: number },
-		up: boolean
+		up: boolean,
+		row: number,
+		col: number
 	) {
-		const { x, y } = pos;
-		const half = CONFIG.baseTriangleSize / 2;
-		const vertices = up
-			? [
-					{ x, y },
-					{ x: x - half, y: y + triangleHeight },
-					{ x: x + half, y: y + triangleHeight }
-				]
-			: [
-					{ x: x - half, y },
-					{ x: x + half, y },
-					{ x, y: y + triangleHeight }
-				];
+		const vertices = getTriangleVertices(pos, up);
+		let innerTriangleElement: d3.Selection<SVGPolygonElement, unknown, null, undefined> | null = null;
 
-		parent
+		triangleParent
 			.append('polygon')
 			.attr('points', vertices.map((v) => `${v.x},${v.y}`).join(' '))
-			.attr('fill', 'none')
+			.attr('fill', 'transparent')
 			.attr('stroke', CONFIG.triangle.strokeColor)
 			.attr('stroke-width', CONFIG.triangle.strokeWidth)
-			.attr('opacity', CONFIG.triangle.opacity);
+			.attr('opacity', CONFIG.triangle.opacity)
+			.style('cursor', 'pointer')
+			.on('mouseenter', () => {
+				if (!innerTriangleElement) {
+					innerTriangleElement = createInnerTriangleElement(innerTriangleParent, pos, up);
+				}
+			})
+			.on('mouseleave', () => {
+				if (innerTriangleElement) {
+					innerTriangleElement.remove();
+					innerTriangleElement = null;
+				}
+			});
 
 		return vertices;
 	}
 
-	function createVertex(
+	function createInnerTriangleElement(
 		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
+		gridPos: { x: number; y: number },
+		gridUp: boolean
+	) {
+		const vertices = getTriangleVertices(gridPos, gridUp);
+		const center = getCentroid(vertices);
+		const innerVertices = vertices.map((vertex) => ({
+			x: center.x + (vertex.x - center.x) * scale,
+			y: center.y + (vertex.y - center.y) * scale
+		}));
+
+		return parent
+			.append('polygon')
+			.attr('points', innerVertices.map((v) => `${v.x},${v.y}`).join(' '))
+			.attr('fill', CONFIG.innerTriangle.fillColor)
+			.attr('stroke', CONFIG.innerTriangle.strokeColor)
+			.attr('stroke-width', CONFIG.innerTriangle.strokeWidth)
+			.attr('opacity', CONFIG.innerTriangle.opacity)
+			.style('pointer-events', 'none');
+	}
+
+	// Remove unused createVertex function - using createVertexWithHover instead
+
+	function createVertexWithHover(
+		vertexParent: d3.Selection<SVGGElement, unknown, null, undefined>,
+		innerCircleParent: d3.Selection<SVGGElement, unknown, null, undefined>,
 		pos: { x: number; y: number }
 	) {
-		parent
+		let innerCircleElement: d3.Selection<SVGCircleElement, unknown, null, undefined> | null = null;
+
+		vertexParent
 			.append('circle')
 			.attr('cx', pos.x)
 			.attr('cy', pos.y)
 			.attr('r', CONFIG.vertex.diameter / 2)
 			.attr('fill', CONFIG.vertex.color)
-			.attr('opacity', CONFIG.vertex.opacity);
+			.attr('opacity', CONFIG.vertex.opacity)
+			.style('cursor', 'pointer')
+			.on('mouseenter', () => {
+				if (!innerCircleElement) {
+					innerCircleElement = createInnerCircleElement(innerCircleParent, pos);
+				}
+			})
+			.on('mouseleave', () => {
+				if (innerCircleElement) {
+					innerCircleElement.remove();
+					innerCircleElement = null;
+				}
+			});
+	}
+
+	function createInnerCircleElement(
+		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
+		pos: { x: number; y: number }
+	) {
+		return parent
+			.append('circle')
+			.attr('cx', pos.x)
+			.attr('cy', pos.y)
+			.attr('r', CONFIG.innerCircle.diameter / 2)
+			.attr('fill', CONFIG.innerCircle.fillColor)
+			.attr('stroke', CONFIG.innerCircle.strokeColor)
+			.attr('stroke-width', CONFIG.innerCircle.strokeWidth)
+			.attr('opacity', CONFIG.innerCircle.opacity)
+			.style('pointer-events', 'none'); // Don't interfere with vertex interactions
 	}
 
 	function createVertexLabel(
@@ -241,60 +302,13 @@
 			.attr('font-size', CONFIG.vertexLabel.fontSize)
 			.attr('font-family', CONFIG.vertexLabel.fontFamily)
 			.attr('fill', CONFIG.vertexLabel.color)
+			.style('pointer-events', 'none')
 			.text(label);
 	}
 
-	function createInnerTriangle(
-		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
-		gridPos: { x: number; y: number },
-		gridUp: boolean
-	) {
-		const { x, y } = gridPos;
-		const half = CONFIG.baseTriangleSize / 2;
-		const gridVertices = gridUp
-			? [
-					{ x, y },
-					{ x: x - half, y: y + triangleHeight },
-					{ x: x + half, y: y + triangleHeight }
-				]
-			: [
-					{ x: x - half, y },
-					{ x: x + half, y },
-					{ x, y: y + triangleHeight }
-				];
+	// Remove unused createInnerTriangle function - using createInnerTriangleElement instead
 
-		const centerX = (gridVertices[0].x + gridVertices[1].x + gridVertices[2].x) / 3;
-		const centerY = (gridVertices[0].y + gridVertices[1].y + gridVertices[2].y) / 3;
-		const scale = CONFIG.innerTriangle.size / CONFIG.baseTriangleSize;
-
-		const innerVertices = gridVertices.map((vertex) => ({
-			x: centerX + (vertex.x - centerX) * scale,
-			y: centerY + (vertex.y - centerY) * scale
-		}));
-
-		parent
-			.append('polygon')
-			.attr('points', innerVertices.map((v) => `${v.x},${v.y}`).join(' '))
-			.attr('fill', CONFIG.innerTriangle.fillColor)
-			.attr('stroke', CONFIG.innerTriangle.strokeColor)
-			.attr('stroke-width', CONFIG.innerTriangle.strokeWidth)
-			.attr('opacity', CONFIG.innerTriangle.opacity);
-	}
-
-	function createInnerCircle(
-		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
-		pos: { x: number; y: number }
-	) {
-		parent
-			.append('circle')
-			.attr('cx', pos.x)
-			.attr('cy', pos.y)
-			.attr('r', CONFIG.innerCircle.diameter / 2)
-			.attr('fill', CONFIG.innerCircle.fillColor)
-			.attr('stroke', CONFIG.innerCircle.strokeColor)
-			.attr('stroke-width', CONFIG.innerCircle.strokeWidth)
-			.attr('opacity', CONFIG.innerCircle.opacity);
-	}
+	// Remove unused createInnerCircle function - using createInnerCircleElement instead
 
 	function createLabel(
 		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
@@ -303,47 +317,25 @@
 		title: string,
 		subtitle: string
 	) {
-		// Calculate the centroid of the triangle (same as inner triangle calculation)
-		const { x, y } = gridPos;
-		const half = CONFIG.baseTriangleSize / 2;
-		const gridVertices = gridUp
-			? [
-					{ x, y },
-					{ x: x - half, y: y + triangleHeight },
-					{ x: x + half, y: y + triangleHeight }
-				]
-			: [
-					{ x: x - half, y },
-					{ x: x + half, y },
-					{ x, y: y + triangleHeight }
-				];
+		const vertices = getTriangleVertices(gridPos, gridUp);
+		const center = getCentroid(vertices);
 
-		const centerX = (gridVertices[0].x + gridVertices[1].x + gridVertices[2].x) / 3;
-		const centerY = (gridVertices[0].y + gridVertices[1].y + gridVertices[2].y) / 3;
-
-		// Create title text
-		parent
-			.append('text')
-			.attr('x', centerX)
-			.attr('y', centerY - CONFIG.label.spacing / 2)
-			.attr('text-anchor', 'middle')
-			.attr('dominant-baseline', 'middle')
-			.attr('font-size', CONFIG.label.title.fontSize)
-			.attr('font-family', CONFIG.label.title.fontFamily)
-			.attr('fill', CONFIG.label.title.color)
-			.text(title);
-
-		// Create subtitle text
-		parent
-			.append('text')
-			.attr('x', centerX)
-			.attr('y', centerY + CONFIG.label.spacing / 2)
-			.attr('text-anchor', 'middle')
-			.attr('dominant-baseline', 'middle')
-			.attr('font-size', CONFIG.label.subtitle.fontSize)
-			.attr('font-family', CONFIG.label.subtitle.fontFamily)
-			.attr('fill', CONFIG.label.subtitle.color)
-			.text(subtitle);
+		// Create title and subtitle text
+		[{text: title, y: center.y - CONFIG.label.spacing / 2, config: CONFIG.label.title},
+		 {text: subtitle, y: center.y + CONFIG.label.spacing / 2, config: CONFIG.label.subtitle}]
+			.forEach(({text, y, config}) => {
+				parent
+					.append('text')
+					.attr('x', center.x)
+					.attr('y', y)
+					.attr('text-anchor', 'middle')
+					.attr('dominant-baseline', 'middle')
+					.attr('font-size', config.fontSize)
+					.attr('font-family', config.fontFamily)
+					.attr('fill', config.color)
+					.style('pointer-events', 'none')
+					.text(text);
+			});
 	}
 </script>
 
@@ -367,5 +359,9 @@
 		top: 0;
 		left: 0;
 		background: var(--bg-color);
+		user-select: none; /* Prevent text selection */
+		-webkit-user-select: none; /* Safari */
+		-moz-user-select: none; /* Firefox */
+		-ms-user-select: none; /* IE/Edge */
 	}
 </style>
