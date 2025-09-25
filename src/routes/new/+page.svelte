@@ -64,6 +64,11 @@
 	let qInterval = CONFIG.tonnetz.qInterval;
 	let rInterval = CONFIG.tonnetz.rInterval;
 
+	// Highlight state
+	let highlightedChord: string | null = null;
+	let highlightedNote: string | null = null;
+	let isDragging = false;
+
 	// Cached constants for performance
 	const SQRT3 = Math.sqrt(3);
 	const { baseTriangleSize, gridExtent, innerTriangle } = CONFIG;
@@ -75,7 +80,7 @@
 	const hexYFactor = (baseTriangleSize * SQRT3) / 2;
 
 	// Reactive statement to update grid when parameters change
-	$: if (svg && (currentRootNote || showMusicalLabels !== undefined || qInterval || rInterval)) {
+	$: if (svg && (currentRootNote || showMusicalLabels !== undefined || qInterval || rInterval || highlightedChord || highlightedNote)) {
 		updateViewport(currentTransform);
 	}
 
@@ -94,7 +99,12 @@
 			.style('-moz-user-select', 'none')
 			.style('-ms-user-select', 'none')
 			.call(zoom)
-			.on('contextmenu', (e: Event) => e.preventDefault());
+			.on('contextmenu', (e: Event) => e.preventDefault())
+			.on('mouseup', () => {
+				isDragging = false;
+				highlightedChord = null;
+				highlightedNote = null;
+			});
 
 		gridGroup = svg.append('g');
 		svg.call(zoom.transform, d3.zoomIdentity.translate(width / 2, height / 2));
@@ -176,7 +186,7 @@
 		q: Math.round(x / baseTriangleSize - Math.round(y / hexYFactor) / 2)
 	});
 
-	// Optimized chord detection
+	// Optimized chord detection with major/minor distinction
 	function getTriangleChord(row: number, col: number, isUp: boolean): string {
 		const pos = { x: col * spacing.col, y: row * spacing.row };
 		const vertices = getTriangleVertices(pos, isUp);
@@ -193,13 +203,19 @@
 				.sort((a, b) => a - b);
 
 			if (intervals.length === 2) {
-				// if (intervals[0] === 4 && intervals[1] === 7) return NOTES[root];
-				// if (intervals[0] === 3 && intervals[1] === 7) return `${NOTES[root]}m`;
-				return NOTES[root];
+				if (intervals[0] === 4 && intervals[1] === 7) return `${NOTES[root]}`; // Major triad
+				if (intervals[0] === 3 && intervals[1] === 7) return `${NOTES[root]}`; // Minor triad (no 'm' suffix)
 			}
 		}
 
 		return `${NOTES[pitchClasses[0]]}?`;
+	}
+
+	// Get triangle type (major/minor) for more specific identification
+	function getTriangleType(row: number, col: number, isUp: boolean): string {
+		const chordName = getTriangleChord(row, col, isUp);
+		const triangleOrientation = isUp ? 'up' : 'down';
+		return `${chordName}-${triangleOrientation}`;
 	}
 
 	// Function to handle tonnetz preset changes
@@ -228,6 +244,25 @@
 			11: 'Major 7th'
 		};
 		return intervalNames[semitones] || `${semitones} semitones`;
+	}
+
+	// Highlight functions
+	function highlightChord(chordName: string) {
+		highlightedChord = chordName;
+		highlightedNote = null;
+	}
+
+	function highlightNote(noteName: string) {
+		highlightedNote = noteName;
+		highlightedChord = null;
+	}
+
+	function isChordHighlighted(chordName: string): boolean {
+		return highlightedChord === chordName;
+	}
+
+	function isNoteHighlighted(noteName: string): boolean {
+		return highlightedNote === noteName;
 	}
 
 	function createGrid() {
@@ -319,15 +354,30 @@
 			.attr('stroke-width', CONFIG.triangle.strokeWidth)
 			.attr('opacity', CONFIG.triangle.opacity)
 			.style('cursor', 'pointer')
-			.on('mouseenter', () => {
-				if (!innerTriangleElement) {
-					innerTriangleElement = createInnerTriangleElement(innerTriangleParent, pos, up);
-				}
+			.classed('highlighted-triangle', () => {
+				const triangleType = getTriangleType(row, col, up);
+				return isChordHighlighted(triangleType);
 			})
 			.on('mouseleave', () => {
 				if (innerTriangleElement) {
 					innerTriangleElement.remove();
 					innerTriangleElement = null;
+				}
+			})
+			.on('mousedown', (event: MouseEvent) => {
+				event.preventDefault();
+				isDragging = true;
+				const triangleType = getTriangleType(row, col, up);
+				highlightChord(triangleType);
+			})
+			.on('mouseenter', () => {
+				if (isDragging) {
+					// Highlight during drag
+					const triangleType = getTriangleType(row, col, up);
+					highlightChord(triangleType);
+				}
+				if (!innerTriangleElement) {
+					innerTriangleElement = createInnerTriangleElement(innerTriangleParent, pos, up);
 				}
 			});
 
@@ -372,15 +422,33 @@
 			.attr('fill', CONFIG.vertex.color)
 			.attr('opacity', CONFIG.vertex.opacity)
 			.style('cursor', 'pointer')
-			.on('mouseenter', () => {
-				if (!innerCircleElement) {
-					innerCircleElement = createInnerCircleElement(innerCircleParent, pos);
-				}
+			.classed('highlighted-vertex', () => {
+				const { q, r } = cartesianToHex(pos.x, pos.y);
+				const noteName = getNoteFromCoords(q, r, currentRootNote);
+				return isNoteHighlighted(noteName);
 			})
 			.on('mouseleave', () => {
 				if (innerCircleElement) {
 					innerCircleElement.remove();
 					innerCircleElement = null;
+				}
+			})
+			.on('mousedown', (event: MouseEvent) => {
+				event.preventDefault();
+				isDragging = true;
+				const { q, r } = cartesianToHex(pos.x, pos.y);
+				const noteName = getNoteFromCoords(q, r, currentRootNote);
+				highlightNote(noteName);
+			})
+			.on('mouseenter', () => {
+				if (isDragging) {
+					// Highlight during drag
+					const { q, r } = cartesianToHex(pos.x, pos.y);
+					const noteName = getNoteFromCoords(q, r, currentRootNote);
+					highlightNote(noteName);
+				}
+				if (!innerCircleElement) {
+					innerCircleElement = createInnerCircleElement(innerCircleParent, pos);
 				}
 			});
 	}
@@ -450,6 +518,15 @@
 
 <!-- Control Panel -->
 <div class="control-panel">
+	{#if highlightedChord || highlightedNote}
+		<div class="highlight-info">
+			{#if highlightedChord}
+				<span>Playing: {highlightedChord.split('-')[0]} {highlightedChord.includes('-up') ? '(major)' : '(minor)'}</span>
+			{:else if highlightedNote}
+				<span>Playing: {highlightedNote}</span>
+			{/if}
+		</div>
+	{/if}
 	<div class="control-row">
 		<label>
 			<input type="checkbox" bind:checked={showMusicalLabels} />
@@ -526,6 +603,19 @@
 		box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
 	}
 
+	.highlight-info {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: rgba(255, 107, 53, 0.1);
+		border: 1px solid #ff6b35;
+		border-radius: 4px;
+		padding: 6px 8px;
+		font-size: 10px;
+		color: #ff6b35;
+		font-weight: bold;
+	}
+
 	.control-row {
 		display: flex;
 		gap: 12px;
@@ -595,5 +685,31 @@
 		-webkit-user-select: none; /* Safari */
 		-moz-user-select: none; /* Firefox */
 		-ms-user-select: none; /* IE/Edge */
+	}
+
+	/* Highlight styles */
+	:global(.highlighted-triangle) {
+		stroke: #ff6b35 !important;
+		stroke-width: 2 !important;
+		fill: rgba(255, 107, 53, 0.1) !important;
+		opacity: 1 !important;
+		transition: all 0.1s ease;
+	}
+
+	:global(.highlighted-vertex) {
+		fill: #ff6b35 !important;
+		stroke: #ff6b35 !important;
+		stroke-width: 2 !important;
+		opacity: 1 !important;
+		transition: all 0.1s ease;
+	}
+
+	/* Hover effects during selection */
+	:global(.tonnetz-container) {
+		cursor: default;
+	}
+
+	:global(.tonnetz-container.dragging) {
+		cursor: crosshair;
 	}
 </style>
