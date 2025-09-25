@@ -80,6 +80,9 @@
 	let highlightedChord: string | null = null;
 	let highlightedNote: string | null = null;
 	let isDragging = false;
+	let isShiftPressed = false;
+	let selectedChords = new Set<string>();
+	let selectedNotes = new Set<string>();
 
 	// Cached constants for performance
 	const SQRT3 = Math.sqrt(3);
@@ -89,9 +92,15 @@
 	const spacing = { row: TRI_HEIGHT, col: HALF_SIZE };
 	const scale = innerTriangle.size / baseTriangleSize;
 
-	// Reactive grid updates
-	$: if (svg && (currentRootNote || showMusicalLabels !== undefined || singleOctave !== undefined || qInterval || rInterval || highlightedChord || highlightedNote)) {
+	// Reactive grid updates (but not during dragging to prevent flicker)
+	$: if (svg && !isDragging && (currentRootNote || showMusicalLabels !== undefined || singleOctave !== undefined || qInterval || rInterval || selectedChords || selectedNotes)) {
 		updateViewport(currentTransform);
+	}
+	
+	// Separate reactive update for single highlights (immediate, no redraw)
+	$: if (svg && gridGroup && (highlightedChord !== null || highlightedNote !== null)) {
+		// Update highlights without full grid redraw
+		updateHighlightsOnly();
 	}
 
 	// Update CSS custom properties
@@ -129,18 +138,41 @@
 			.on('contextmenu', (e: Event) => e.preventDefault())
 			.on('mouseup', () => {
 				isDragging = false;
-				highlightedChord = null;
-				highlightedNote = null;
+				if (!isShiftPressed) {
+					highlightedChord = null;
+					highlightedNote = null;
+				}
 			});
 
 		gridGroup = svg.append('g');
 		svg.call(zoom.transform, d3.zoomIdentity.translate(width / 2, height / 2));
 		createGrid();
 
+		// Keyboard event listeners for shift key
+		const handleKeyDown = (e: KeyboardEvent) => {
+			if (e.key === 'Shift') {
+				isShiftPressed = true;
+			}
+		};
+		
+		const handleKeyUp = (e: KeyboardEvent) => {
+			if (e.key === 'Shift') {
+				isShiftPressed = false;
+			}
+		};
+
 		const handleResize = () =>
 			svg.attr('width', window.innerWidth).attr('height', window.innerHeight);
+		
 		window.addEventListener('resize', handleResize);
-		return () => window.removeEventListener('resize', handleResize);
+		window.addEventListener('keydown', handleKeyDown);
+		window.addEventListener('keyup', handleKeyUp);
+		
+		return () => {
+			window.removeEventListener('resize', handleResize);
+			window.removeEventListener('keydown', handleKeyDown);
+			window.removeEventListener('keyup', handleKeyUp);
+		};
 	});
 
 	const createZoomBehavior = () =>
@@ -257,13 +289,197 @@
 	const getIntervalDescription = (semitones: number) => INTERVAL_NAMES[semitones] || `${semitones} semitones`;
 
 	// Highlight functions
-	const highlightChord = (name: string) => { highlightedChord = name; highlightedNote = null; };
-	const highlightNote = (name: string) => { highlightedNote = name; highlightedChord = null; };
-	const isChordHighlighted = (name: string) => highlightedChord === name;
-	const isNoteHighlighted = (name: string) => highlightedNote === name;
+	const highlightChord = (name: string) => {
+		if (isShiftPressed) {
+			// Toggle selection when shift is held
+			if (selectedChords.has(name)) {
+				selectedChords.delete(name);
+			} else {
+				selectedChords.add(name);
+			}
+			selectedChords = new Set(selectedChords); // Trigger reactivity
+		} else {
+			// Normal single selection
+			highlightedChord = name;
+			highlightedNote = null;
+			selectedChords.clear();
+			selectedNotes.clear();
+			// Force immediate highlight update during drag
+			if (isDragging && gridGroup) {
+				updateHighlightsOnly();
+			}
+		}
+	};
+	
+	const highlightNote = (name: string) => {
+		if (isShiftPressed) {
+			// Toggle selection when shift is held
+			if (selectedNotes.has(name)) {
+				selectedNotes.delete(name);
+			} else {
+				selectedNotes.add(name);
+			}
+			selectedNotes = new Set(selectedNotes); // Trigger reactivity
+		} else {
+			// Normal single selection
+			highlightedNote = name;
+			highlightedChord = null;
+			selectedChords.clear();
+			selectedNotes.clear();
+			// Force immediate highlight update during drag
+			if (isDragging && gridGroup) {
+				updateHighlightsOnly();
+			}
+		}
+	};
+	
+	// Get notes that make up a chord
+	const getChordNotes = (chordType: string): string[] => {
+		if (!chordType || chordType === 'null') return [];
+		
+		// Parse chord type (e.g., "C-up" or "F#-down")
+		const [chordName, orientation] = chordType.split('-');
+		if (!chordName || !orientation) return [];
+		
+		// Find a triangle with this chord type to get its vertices
+		for (let row = -5; row <= 5; row++) {
+			for (let col = -5; col <= 5; col++) {
+				const isUp = (row + col) % 2 === 0;
+				if (getTriangleType(row, col, isUp) === chordType) {
+					const pos = { x: col * spacing.col, y: row * spacing.row };
+					const vertices = getTriangleVertices(pos, isUp);
+					return vertices.map(v => {
+						const { q, r } = cartesianToHex(v.x, v.y);
+						return getPitchWithOctave(q, r, currentRootNote);
+					});
+				}
+			}
+		}
+		return [];
+	};
+	
+	// Get chord type from a set of notes
+	const getChordFromNotes = (notes: string[]): string | null => {
+		if (notes.length !== 3) return null;
+		
+		// Search for triangles that contain exactly these 3 notes
+		for (let row = -10; row <= 10; row++) {
+			for (let col = -10; col <= 10; col++) {
+				const isUp = (row + col) % 2 === 0;
+				const pos = { x: col * spacing.col, y: row * spacing.row };
+				const vertices = getTriangleVertices(pos, isUp);
+				const triangleNotes = vertices.map(v => {
+					const { q, r } = cartesianToHex(v.x, v.y);
+					return getPitchWithOctave(q, r, currentRootNote);
+				});
+				
+				// Check if this triangle contains exactly the same notes
+				const sortedTriangleNotes = [...triangleNotes].sort();
+				const sortedInputNotes = [...notes].sort();
+				
+				if (JSON.stringify(sortedTriangleNotes) === JSON.stringify(sortedInputNotes)) {
+					return getTriangleType(row, col, isUp);
+				}
+			}
+		}
+		return null;
+	};
+	
+	// Get all possible 3-note combinations from an array
+	const getCombinations = (arr: string[], size: number): string[][] => {
+		if (size > arr.length) return [];
+		if (size === 1) return arr.map(item => [item]);
+		if (size === arr.length) return [arr];
+		
+		const result: string[][] = [];
+		for (let i = 0; i <= arr.length - size; i++) {
+			const head = arr[i];
+			const tailCombinations = getCombinations(arr.slice(i + 1), size - 1);
+			for (const tail of tailCombinations) {
+				result.push([head, ...tail]);
+			}
+		}
+		return result;
+	};
+	
+	const isChordHighlighted = (name: string) => {
+		// Direct chord highlighting
+		if (highlightedChord === name || selectedChords.has(name)) {
+			return true;
+		}
+		
+		// Get all currently highlighted/selected notes
+		const allNotes = getAllHighlightedNotes();
+		
+		// Check if any 3-note combination forms this chord
+		if (allNotes.length >= 3) {
+			const combinations = getCombinations(allNotes, 3);
+			for (const combination of combinations) {
+				const formedChord = getChordFromNotes(combination);
+				if (formedChord === name) return true;
+			}
+		}
+		
+		return false;
+	};
+	
+	const isNoteHighlighted = (name: string) => {
+		// Direct note highlighting
+		if (highlightedNote === name || selectedNotes.has(name)) {
+			return true;
+		}
+		
+		// Check if this note is part of any highlighted chord
+		if (highlightedChord) {
+			const chordNotes = getChordNotes(highlightedChord);
+			if (chordNotes.includes(name)) return true;
+		}
+		
+		// Check if this note is part of any selected chords
+		for (const selectedChord of selectedChords) {
+			const chordNotes = getChordNotes(selectedChord);
+			if (chordNotes.includes(name)) return true;
+		}
+		
+		return false;
+	};
+	
+	// Get all currently highlighted/selected notes
+	const getAllHighlightedNotes = (): string[] => {
+		const notes = new Set<string>();
+		
+		// Add directly highlighted note
+		if (highlightedNote) notes.add(highlightedNote);
+		
+		// Add selected notes
+		for (const note of selectedNotes) {
+			notes.add(note);
+		}
+		
+		return Array.from(notes);
+	};
 
 	function createGrid() {
 		updateViewport(currentTransform);
+	}
+	
+	// Fast highlight updates without full redraw
+	function updateHighlightsOnly() {
+		if (!gridGroup) return;
+		
+		// Update triangle highlights
+		gridGroup.selectAll('polygon').classed('highlighted-triangle', (d: any, i: number, nodes: any[]) => {
+			const element = d3.select(nodes[i]);
+			const triangleType = element.attr('data-triangle-type');
+			return triangleType && isChordHighlighted(triangleType);
+		});
+		
+		// Update vertex highlights
+		gridGroup.selectAll('circle').classed('highlighted-vertex', (d: any, i: number, nodes: any[]) => {
+			const element = d3.select(nodes[i]);
+			const noteName = element.attr('data-note');
+			return noteName && isNoteHighlighted(noteName);
+		});
 	}
 
 	function updateViewport(transform: d3.ZoomTransform) {
@@ -306,7 +522,7 @@
 			createTriangleWithHover(triangles, innerTriangles, pos, isUp, row, col);
 			if (isTriangleVisible(pos, transform)) {
 				const info = showMusicalLabels ? getTriangleChord(row, col, isUp) : `(${row},${col})`;
-				const subtitle = showMusicalLabels ? (isUp ? 'major' : 'minor') : (isUp ? 'UP' : 'DOWN');
+				const subtitle = showMusicalLabels ? (isUp ? 'minor' : 'major') : (isUp ? 'UP' : 'DOWN');
 				createLabel(labels, pos, isUp, info, subtitle);
 			}
 		});
@@ -354,6 +570,7 @@
 			.attr('stroke-width', CONFIG.triangle.strokeWidth)
 			.attr('opacity', CONFIG.triangle.opacity)
 			.style('cursor', 'pointer')
+			.attr('data-triangle-type', getTriangleType(row, col, up))
 			.classed('highlighted-triangle', () => {
 				const triangleType = getTriangleType(row, col, up);
 				return isChordHighlighted(triangleType);
@@ -372,10 +589,13 @@
 				highlightChord(triangleType);
 			})
 			.on('mouseenter', () => {
-				if (isDragging) {
-					// Highlight during drag
+				if (isDragging && !isShiftPressed) {
+					// Highlight during drag (only in normal mode, not multi-select)
 					const triangleType = getTriangleType(row, col, up);
-					highlightChord(triangleType);
+					highlightedChord = triangleType;
+					highlightedNote = null;
+					// Force immediate update during drag
+					setTimeout(() => updateHighlightsOnly(), 0);
 				}
 				if (!innerTriangleElement) {
 					innerTriangleElement = createInnerTriangleElement(innerTriangleParent, pos, up);
@@ -423,6 +643,10 @@
 			.attr('fill', CONFIG.vertex.color)
 			.attr('opacity', CONFIG.vertex.opacity)
 			.style('cursor', 'pointer')
+			.attr('data-note', () => {
+				const { q, r } = cartesianToHex(pos.x, pos.y);
+				return getPitchWithOctave(q, r, currentRootNote);
+			})
 			.classed('highlighted-vertex', () => {
 				const { q, r } = cartesianToHex(pos.x, pos.y);
 				const noteName = getPitchWithOctave(q, r, currentRootNote);
@@ -443,11 +667,14 @@
 				highlightNote(noteName);
 			})
 			.on('mouseenter', () => {
-				if (isDragging) {
-					// Highlight during drag
+				if (isDragging && !isShiftPressed) {
+					// Highlight during drag (only in normal mode, not multi-select)
 					const { q, r } = cartesianToHex(pos.x, pos.y);
 					const noteName = getPitchWithOctave(q, r, currentRootNote);
-					highlightNote(noteName);
+					highlightedNote = noteName;
+					highlightedChord = null;
+					// Force immediate update during drag
+					setTimeout(() => updateHighlightsOnly(), 0);
 				}
 				if (!innerCircleElement) {
 					innerCircleElement = createInnerCircleElement(innerCircleParent, pos);
@@ -520,16 +747,20 @@
 
 <!-- Control Panel -->
 <div class="control-panel">
-	<div class="highlight-info" class:inactive={!highlightedChord && !highlightedNote}>
+	<div class="highlight-info" class:inactive={!highlightedChord && !highlightedNote && selectedChords.size === 0 && selectedNotes.size === 0}>
 		{#if highlightedChord}
 			<span
 				>Playing: {highlightedChord.split('-')[0]}
-				{highlightedChord.includes('-up') ? '(major)' : '(minor)'}</span
+				{highlightedChord.includes('-up') ? '(minor)' : '(major)'}</span
 			>
 		{:else if highlightedNote}
 			<span>Playing: {highlightedNote}</span>
+		{:else if selectedChords.size > 0}
+			<span>Selected: {Array.from(selectedChords).map(c => c.split('-')[0]).join(', ')} ({selectedChords.size} chords)</span>
+		{:else if selectedNotes.size > 0}
+			<span>Selected: {Array.from(selectedNotes).join(', ')} ({selectedNotes.size} notes)</span>
 		{:else}
-			<span>Nothing playing</span>
+			<span>Nothing playing{isShiftPressed ? ' - Hold Shift + Click to multi-select' : ''}</span>
 		{/if}
 	</div>
 	<div class="control-row">
