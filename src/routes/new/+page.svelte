@@ -9,7 +9,7 @@
 	const CONFIG = {
 		baseTriangleSize: 100,
 		gridExtent: 50,
-		zoomRange: 2,
+		zoomRange: 1.5,
 		triangle: { strokeWidth: 0.3, strokeColor: '#333', opacity: 1 },
 		vertex: { diameter: 30, color: '#1a1a1a', opacity: 1 },
 		innerTriangle: {
@@ -54,6 +54,15 @@
 				'Shepard Tone': { qInterval: 12, rInterval: 7 } // Octave + fifth lattice
 			}
 		},
+		highlight: {
+			// Highlight colors and styling
+			color: '#ff6b35', // Orange highlight color
+			strokeWidth: 2, // Highlighted stroke width
+			fillOpacity: 0.1, // Fill opacity for highlighted triangles
+			// Animation settings
+			transitionDuration: 0.1, // CSS transition duration in seconds
+			easing: 'ease' // CSS transition easing
+		},
 		background: '#1a1a1a'
 	};
 
@@ -69,19 +78,48 @@
 	let highlightedNote: string | null = null;
 	let isDragging = false;
 
-	// Cached constants for performance
+	// Performance constants - cached once
 	const SQRT3 = Math.sqrt(3);
 	const { baseTriangleSize, gridExtent, innerTriangle } = CONFIG;
-	const triangleHeight = (baseTriangleSize * SQRT3) / 2;
-	const spacing = { row: triangleHeight, col: baseTriangleSize / 2 };
+	const HALF_SIZE = baseTriangleSize * 0.5;
+	const TRI_HEIGHT = baseTriangleSize * SQRT3 * 0.5;
+	const spacing = { row: TRI_HEIGHT, col: HALF_SIZE };
 	const gridBounds = { width: gridExtent * spacing.col, height: gridExtent * spacing.row };
-	const half = baseTriangleSize / 2;
 	const scale = innerTriangle.size / baseTriangleSize;
-	const hexYFactor = (baseTriangleSize * SQRT3) / 2;
+	const HEX_Y_FACTOR = TRI_HEIGHT;
 
 	// Reactive statement to update grid when parameters change
-	$: if (svg && (currentRootNote || showMusicalLabels !== undefined || qInterval || rInterval || highlightedChord || highlightedNote)) {
+	$: if (
+		svg &&
+		(currentRootNote ||
+			showMusicalLabels !== undefined ||
+			qInterval ||
+			rInterval ||
+			highlightedChord ||
+			highlightedNote)
+	) {
 		updateViewport(currentTransform);
+	}
+
+	// Reactive statement to update CSS custom properties for highlights
+	$: if (container) {
+		const fillColor = CONFIG.highlight.color.replace('#', '');
+		const r = parseInt(fillColor.substr(0, 2), 16);
+		const g = parseInt(fillColor.substr(2, 2), 16);
+		const b = parseInt(fillColor.substr(4, 2), 16);
+		const fillRgba = `rgba(${r}, ${g}, ${b}, ${CONFIG.highlight.fillOpacity})`;
+
+		container.style.setProperty('--highlight-color-value', CONFIG.highlight.color);
+		container.style.setProperty(
+			'--highlight-stroke-width-value',
+			CONFIG.highlight.strokeWidth.toString()
+		);
+		container.style.setProperty('--highlight-fill-value', fillRgba);
+		container.style.setProperty(
+			'--highlight-transition-duration-value',
+			`${CONFIG.highlight.transitionDuration}s`
+		);
+		container.style.setProperty('--highlight-easing-value', CONFIG.highlight.easing);
 	}
 
 	onMount(() => {
@@ -137,17 +175,11 @@
 	// Optimized utility functions
 	const getTriangleVertices = (pos: { x: number; y: number }, up: boolean) => {
 		const { x, y } = pos;
-		return up
-			? [
-					{ x, y },
-					{ x: x - half, y: y + triangleHeight },
-					{ x: x + half, y: y + triangleHeight }
-				]
-			: [
-					{ x: x - half, y },
-					{ x: x + half, y },
-					{ x, y: y + triangleHeight }
-				];
+		return up ? [
+			{ x, y }, { x: x - HALF_SIZE, y: y + TRI_HEIGHT }, { x: x + HALF_SIZE, y: y + TRI_HEIGHT }
+		] : [
+			{ x: x - HALF_SIZE, y }, { x: x + HALF_SIZE, y }, { x, y: y + TRI_HEIGHT }
+		];
 	};
 
 	const getCentroid = (vertices: { x: number; y: number }[]) => ({
@@ -155,36 +187,29 @@
 		y: vertices.reduce((sum, v) => sum + v.y, 0) / 3
 	});
 
-	const isVisible = (
-		pos: { x: number; y: number },
-		transform: d3.ZoomTransform,
-		bufferSize: number
-	) => {
+	// Fast visibility check
+	const isVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform, bufferSize: number) => {
 		const screenPos = transform.apply([pos.x, pos.y]);
-		const [width, height] = [window.innerWidth, window.innerHeight];
 		const buffer = bufferSize * transform.k;
-		return (
-			screenPos[0] > -buffer &&
-			screenPos[0] < width + buffer &&
-			screenPos[1] > -buffer &&
-			screenPos[1] < height + buffer
-		);
+		return screenPos[0] > -buffer && screenPos[0] < window.innerWidth + buffer &&
+			   screenPos[1] > -buffer && screenPos[1] < window.innerHeight + buffer;
 	};
 
-	// Tonnetz Mathematical Formula Implementation
+	// Music theory constants - optimized lookups
 	const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] as const;
-	const NOTE_TO_SEMITONE = Object.fromEntries(NOTES.map((note, i) => [note, i]));
+	const NOTE_TO_SEMITONE: Record<string, number> = {
+		'C': 0, 'C#': 1, 'D': 2, 'D#': 3, 'E': 4, 'F': 5,
+		'F#': 6, 'G': 7, 'G#': 8, 'A': 9, 'A#': 10, 'B': 11
+	};
 
-	// Optimized utility functions
-	const mod = (n: number, m = 12) => ((n % m) + m) % m;
-	const pitchClass = (q: number, r: number, root = 0) => mod(root + qInterval * q + rInterval * r);
-	const pcToName = (pc: number) => NOTES[mod(pc)];
-	const getNoteFromCoords = (q: number, r: number, rootNote: string) =>
-		pcToName(pitchClass(q, r, NOTE_TO_SEMITONE[rootNote]));
-	const cartesianToHex = (x: number, y: number) => ({
-		r: Math.round(y / hexYFactor),
-		q: Math.round(x / baseTriangleSize - Math.round(y / hexYFactor) / 2)
-	});
+	// Fast math functions
+	const mod12 = (n: number) => ((n % 12) + 12) % 12;
+	const pitchClass = (q: number, r: number, root = 0) => mod12(root + qInterval * q + rInterval * r);
+	const getNoteFromCoords = (q: number, r: number, rootNote: string) => NOTES[pitchClass(q, r, NOTE_TO_SEMITONE[rootNote])];
+	const cartesianToHex = (x: number, y: number) => {
+		const r = Math.round(y / HEX_Y_FACTOR);
+		return { q: Math.round(x / baseTriangleSize - r * 0.5), r };
+	};
 
 	// Optimized chord detection with major/minor distinction
 	function getTriangleChord(row: number, col: number, isUp: boolean): string {
@@ -199,7 +224,7 @@
 		for (const [i, root] of pitchClasses.entries()) {
 			const intervals = pitchClasses
 				.filter((_, idx) => idx !== i)
-				.map((note) => mod(note - root))
+				.map((note) => mod12(note - root))
 				.sort((a, b) => a - b);
 
 			if (intervals.length === 2) {
@@ -219,51 +244,25 @@
 	}
 
 	// Function to handle tonnetz preset changes
-	function changeTonnetzPreset(presetName: string) {
+	// Optimized preset and interval functions
+	const changeTonnetzPreset = (presetName: string) => {
 		const preset = CONFIG.tonnetz.presets[presetName as keyof typeof CONFIG.tonnetz.presets];
 		if (preset) {
 			currentTonnetzName = presetName;
 			qInterval = preset.qInterval;
 			rInterval = preset.rInterval;
 		}
-	}
+	};
 
-	// Function to get interval description
-	function getIntervalDescription(semitones: number): string {
-		const intervalNames: { [key: number]: string } = {
-			1: 'Minor 2nd',
-			2: 'Major 2nd',
-			3: 'Minor 3rd',
-			4: 'Major 3rd',
-			5: 'Perfect 4th',
-			6: 'Tritone',
-			7: 'Perfect 5th',
-			8: 'Minor 6th',
-			9: 'Major 6th',
-			10: 'Minor 7th',
-			11: 'Major 7th'
-		};
-		return intervalNames[semitones] || `${semitones} semitones`;
-	}
+	const INTERVAL_NAMES = ['Unison', 'Minor 2nd', 'Major 2nd', 'Minor 3rd', 'Major 3rd', 
+		'Perfect 4th', 'Tritone', 'Perfect 5th', 'Minor 6th', 'Major 6th', 'Minor 7th', 'Major 7th'];
+	const getIntervalDescription = (semitones: number) => INTERVAL_NAMES[semitones] || `${semitones} semitones`;
 
-	// Highlight functions
-	function highlightChord(chordName: string) {
-		highlightedChord = chordName;
-		highlightedNote = null;
-	}
-
-	function highlightNote(noteName: string) {
-		highlightedNote = noteName;
-		highlightedChord = null;
-	}
-
-	function isChordHighlighted(chordName: string): boolean {
-		return highlightedChord === chordName;
-	}
-
-	function isNoteHighlighted(noteName: string): boolean {
-		return highlightedNote === noteName;
-	}
+	// Simplified highlight functions
+	const highlightChord = (name: string) => { highlightedChord = name; highlightedNote = null; };
+	const highlightNote = (name: string) => { highlightedNote = name; highlightedChord = null; };
+	const isChordHighlighted = (name: string) => highlightedChord === name;
+	const isNoteHighlighted = (name: string) => highlightedNote === name;
 
 	function createGrid() {
 		updateViewport(currentTransform);
@@ -272,65 +271,74 @@
 	function updateViewport(transform: d3.ZoomTransform) {
 		currentTransform = transform;
 		gridGroup.selectAll('*').remove();
-		const [triangles, vertices, innerTriangles, innerCircles, labels, vertexLabels] = Array.from(
-			{ length: 6 },
-			() => gridGroup.append('g')
-		);
+		
+		// Create groups once
+		const triangles = gridGroup.append('g').attr('class', 'triangles');
+		const vertices = gridGroup.append('g').attr('class', 'vertices');
+		const innerTriangles = gridGroup.append('g').attr('class', 'inner-triangles');
+		const innerCircles = gridGroup.append('g').attr('class', 'inner-circles');
+		const labels = gridGroup.append('g').attr('class', 'labels');
+		const vertexLabels = gridGroup.append('g').attr('class', 'vertex-labels');
+		
 		const uniqueVertices = new Set<string>();
-
-		// Optimized grid rendering with viewport culling
 		const viewBounds = getVisibleBounds(transform);
+		
+		// Batch DOM operations for better performance
+		const triangleData: Array<{pos: {x: number, y: number}, isUp: boolean, row: number, col: number}> = [];
+		const vertexData: Array<{pos: {x: number, y: number}, label: string}> = [];
+		
+		// Collect data first
 		for (let row = viewBounds.minRow; row <= viewBounds.maxRow; row++) {
 			for (let col = viewBounds.minCol; col <= viewBounds.maxCol; col++) {
 				const pos = { x: col * spacing.col, y: row * spacing.row };
 				const isUp = (row + col) % 2 === 0;
-
-				// Create triangles and extract vertices
-				createTriangleWithHover(triangles, innerTriangles, pos, isUp, row, col).forEach((v) => {
-					const key = `${v.x.toFixed(2)},${v.y.toFixed(2)}`;
+				
+				triangleData.push({pos, isUp, row, col});
+				
+				// Collect unique vertices
+				getTriangleVertices(pos, isUp).forEach((v) => {
+					const key = `${v.x.toFixed(1)},${v.y.toFixed(1)}`;
 					if (!uniqueVertices.has(key)) {
 						uniqueVertices.add(key);
-
-						// Convert to hex coordinates and get label
 						const { q, r } = cartesianToHex(v.x, v.y);
-						const vertexLabel = showMusicalLabels
-							? getNoteFromCoords(q, r, currentRootNote)
-							: `(${q},${r})`;
-
-						createVertexWithHover(vertices, innerCircles, v);
-						createVertexLabel(vertexLabels, v, vertexLabel);
+						const label = showMusicalLabels ? getNoteFromCoords(q, r, currentRootNote) : `(${q},${r})`;
+						vertexData.push({pos: v, label});
 					}
 				});
-
-				// Create triangle labels
-				if (isTriangleVisible(pos, transform)) {
-					const triangleInfo = showMusicalLabels
-						? getTriangleChord(row, col, isUp)
-						: `(${row},${col})`;
-					const subtitle = showMusicalLabels ? (isUp ? 'major' : 'minor') : isUp ? 'UP' : 'DOWN';
-					createLabel(labels, pos, isUp, triangleInfo, subtitle);
-				}
 			}
 		}
+		
+		// Batch create triangles
+		triangleData.forEach(({pos, isUp, row, col}) => {
+			createTriangleWithHover(triangles, innerTriangles, pos, isUp, row, col);
+			if (isTriangleVisible(pos, transform)) {
+				const info = showMusicalLabels ? getTriangleChord(row, col, isUp) : `(${row},${col})`;
+				const subtitle = showMusicalLabels ? (isUp ? 'major' : 'minor') : (isUp ? 'UP' : 'DOWN');
+				createLabel(labels, pos, isUp, info, subtitle);
+			}
+		});
+		
+		// Batch create vertices
+		vertexData.forEach(({pos, label}) => {
+			createVertexWithHover(vertices, innerCircles, pos);
+			createVertexLabel(vertexLabels, pos, label);
+		});
 	}
 
-	// Optimized visibility and bounds functions
-	const isVertexVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform) =>
-		isVisible(pos, transform, CONFIG.vertex.diameter);
-
+	// Optimized visibility functions
 	const isTriangleVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform) =>
 		isVisible(pos, transform, baseTriangleSize);
 
 	function getVisibleBounds(transform: d3.ZoomTransform) {
 		const [width, height] = [window.innerWidth, window.innerHeight];
 		const [topLeft, bottomRight] = [transform.invert([0, 0]), transform.invert([width, height])];
-		const buffer = Math.max(baseTriangleSize * 2, 200);
+		const buffer = baseTriangleSize * 1.5; // Reduced buffer for better performance
 
 		return {
-			minRow: Math.floor((topLeft[1] - buffer) / spacing.row) - 1,
-			maxRow: Math.ceil((bottomRight[1] + buffer) / spacing.row) + 1,
-			minCol: Math.floor((topLeft[0] - buffer) / spacing.col) - 1,
-			maxCol: Math.ceil((bottomRight[0] + buffer) / spacing.col) + 1
+			minRow: Math.floor((topLeft[1] - buffer) / spacing.row),
+			maxRow: Math.ceil((bottomRight[1] + buffer) / spacing.row),
+			minCol: Math.floor((topLeft[0] - buffer) / spacing.col),
+			maxCol: Math.ceil((bottomRight[0] + buffer) / spacing.col)
 		};
 	}
 
@@ -518,15 +526,18 @@
 
 <!-- Control Panel -->
 <div class="control-panel">
-	{#if highlightedChord || highlightedNote}
-		<div class="highlight-info">
-			{#if highlightedChord}
-				<span>Playing: {highlightedChord.split('-')[0]} {highlightedChord.includes('-up') ? '(major)' : '(minor)'}</span>
-			{:else if highlightedNote}
-				<span>Playing: {highlightedNote}</span>
-			{/if}
-		</div>
-	{/if}
+	<div class="highlight-info" class:inactive={!highlightedChord && !highlightedNote}>
+		{#if highlightedChord}
+			<span
+				>Playing: {highlightedChord.split('-')[0]}
+				{highlightedChord.includes('-up') ? '(major)' : '(minor)'}</span
+			>
+		{:else if highlightedNote}
+			<span>Playing: {highlightedNote}</span>
+		{:else}
+			<span>Nothing playing</span>
+		{/if}
+	</div>
 	<div class="control-row">
 		<label>
 			<input type="checkbox" bind:checked={showMusicalLabels} />
@@ -614,6 +625,14 @@
 		font-size: 10px;
 		color: #ff6b35;
 		font-weight: bold;
+		transition: all 0.2s ease;
+	}
+
+	.highlight-info.inactive {
+		background: rgba(128, 128, 128, 0.1);
+		border: 1px solid #666;
+		color: #888;
+		font-weight: normal;
 	}
 
 	.control-row {
@@ -675,6 +694,11 @@
 
 	.tonnetz-container {
 		--bg-color: #1a1a1a;
+		--highlight-color: var(--highlight-color-value, #ff6b35);
+		--highlight-stroke-width: var(--highlight-stroke-width-value, 2);
+		--highlight-fill: var(--highlight-fill-value, rgba(255, 107, 53, 0.1));
+		--highlight-transition-duration: var(--highlight-transition-duration-value, 0.1s);
+		--highlight-easing: var(--highlight-easing-value, ease);
 		width: 100vw;
 		height: 100vh;
 		position: fixed;
@@ -687,21 +711,21 @@
 		-ms-user-select: none; /* IE/Edge */
 	}
 
-	/* Highlight styles */
+	/* Highlight styles - using CONFIG values */
 	:global(.highlighted-triangle) {
-		stroke: #ff6b35 !important;
-		stroke-width: 2 !important;
-		fill: rgba(255, 107, 53, 0.1) !important;
+		stroke: var(--highlight-color, #ff6b35) !important;
+		stroke-width: var(--highlight-stroke-width, 2) !important;
+		fill: var(--highlight-fill, rgba(255, 107, 53, 0.1)) !important;
 		opacity: 1 !important;
-		transition: all 0.1s ease;
+		transition: all var(--highlight-transition-duration, 0.1s) var(--highlight-easing, ease);
 	}
 
 	:global(.highlighted-vertex) {
-		fill: #ff6b35 !important;
-		stroke: #ff6b35 !important;
-		stroke-width: 2 !important;
+		fill: var(--highlight-color, #ff6b35) !important;
+		stroke: var(--highlight-color, #ff6b35) !important;
+		stroke-width: var(--highlight-stroke-width, 2) !important;
 		opacity: 1 !important;
-		transition: all 0.1s ease;
+		transition: all var(--highlight-transition-duration, 0.1s) var(--highlight-easing, ease);
 	}
 
 	/* Hover effects during selection */
