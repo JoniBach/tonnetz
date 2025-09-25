@@ -65,6 +65,95 @@
 			transitionDuration: 0.1, // CSS transition duration in seconds
 			easing: 'ease' // CSS transition easing
 		},
+		chordPatterns: {
+			// Chord pattern recipes as coordinate offsets from root (0,0)
+			presets: {
+				Major: [
+					[0, 0],
+					[0, 1],
+					[1, 0]
+				],
+				Minor: [
+					[0, 0],
+					[1, -1],
+					[1, 0]
+				],
+				'Minor 7': [
+					[0, 0],
+					[1, -1],
+					[1, 0],
+					[2, -1]
+				],
+				'Major 7': [
+					[0, 0],
+					[0, 1],
+					[1, 0],
+					[1, 1]
+				],
+				'Minor Major 7': [
+					[0, 0],
+					[1, -1],
+					[1, 0],
+					[1, 1]
+				],
+				'Major 6': [
+					[0, 0],
+					[0, 1],
+					[1, 0],
+					[3, 0]
+				],
+				'Minor 6': [
+					[0, 0],
+					[1, -1],
+					[1, 0],
+					[3, 0]
+				],
+				'Suspended 2': [
+					[0, 0],
+					[1, 0],
+					[2, 0]
+				],
+				'Suspended 4': [
+					[-3, 1],
+					[-2, 1],
+					[0, 0]
+				],
+				Diminished: [
+					[0, 0],
+					[1, -1],
+					[2, 1]
+				],
+				Augmented: [
+					[0, -1],
+					[0, 0],
+					[0, 1]
+				],
+				'Diminished 7': [
+					[0, 0],
+					[1, -1],
+					[2, 1],
+					[3, 0]
+				],
+				'Augmented Major 7': [
+					[0, -1],
+					[0, 0],
+					[0, 1],
+					[1, 1]
+				],
+				'Half Diminished 7': [
+					[0, 0],
+					[1, -1],
+					[2, -1],
+					[2, 1]
+				],
+				'Dominant 7': [
+					[0, 0],
+					[0, 1],
+					[1, 0],
+					[2, -1]
+				]
+			}
+		},
 		background: '#1a1a1a'
 	};
 
@@ -76,13 +165,16 @@
 	let qInterval = CONFIG.tonnetz.qInterval;
 	let rInterval = CONFIG.tonnetz.rInterval;
 
-	// Highlight state
-	let highlightedChord: string | null = null;
+	// Highlight state - notes are the single source of truth
 	let highlightedNote: string | null = null;
 	let isDragging = false;
 	let isShiftPressed = false;
-	let selectedChords = new Set<string>();
 	let selectedNotes = new Set<string>();
+
+	// Chord pattern state
+	let selectedChordPattern: string | null = null;
+	let chordPatternRoot: string | null = null;
+	let highlightedPatternNotes = new Set<string>();
 
 	// Cached constants for performance
 	const SQRT3 = Math.sqrt(3);
@@ -93,12 +185,21 @@
 	const scale = innerTriangle.size / baseTriangleSize;
 
 	// Reactive grid updates (but not during dragging to prevent flicker)
-	$: if (svg && !isDragging && (currentRootNote || showMusicalLabels !== undefined || singleOctave !== undefined || qInterval || rInterval || selectedChords || selectedNotes)) {
+	$: if (
+		svg &&
+		!isDragging &&
+		(currentRootNote ||
+			showMusicalLabels !== undefined ||
+			singleOctave !== undefined ||
+			qInterval ||
+			rInterval ||
+			selectedNotes)
+	) {
 		updateViewport(currentTransform);
 	}
-	
+
 	// Separate reactive update for single highlights (immediate, no redraw)
-	$: if (svg && gridGroup && (highlightedChord !== null || highlightedNote !== null)) {
+	$: if (svg && gridGroup && (highlightedNote !== null)) {
 		// Update highlights without full grid redraw
 		updateHighlightsOnly();
 	}
@@ -110,7 +211,7 @@
 		const r = parseInt(hex.slice(0, 2), 16);
 		const g = parseInt(hex.slice(2, 4), 16);
 		const b = parseInt(hex.slice(4, 6), 16);
-		
+
 		Object.assign(container.style, {
 			'--highlight-color-value': color,
 			'--highlight-stroke-width-value': strokeWidth.toString(),
@@ -139,8 +240,8 @@
 			.on('mouseup', () => {
 				isDragging = false;
 				if (!isShiftPressed) {
-					highlightedChord = null;
 					highlightedNote = null;
+					selectedNotes.clear();
 				}
 			});
 
@@ -154,7 +255,7 @@
 				isShiftPressed = true;
 			}
 		};
-		
+
 		const handleKeyUp = (e: KeyboardEvent) => {
 			if (e.key === 'Shift') {
 				isShiftPressed = false;
@@ -163,11 +264,11 @@
 
 		const handleResize = () =>
 			svg.attr('width', window.innerWidth).attr('height', window.innerHeight);
-		
+
 		window.addEventListener('resize', handleResize);
 		window.addEventListener('keydown', handleKeyDown);
 		window.addEventListener('keyup', handleKeyUp);
-		
+
 		return () => {
 			window.removeEventListener('resize', handleResize);
 			window.removeEventListener('keydown', handleKeyDown);
@@ -196,11 +297,17 @@
 	// Optimized utility functions
 	const getTriangleVertices = (pos: { x: number; y: number }, up: boolean) => {
 		const { x, y } = pos;
-		return up ? [
-			{ x, y }, { x: x - HALF_SIZE, y: y + TRI_HEIGHT }, { x: x + HALF_SIZE, y: y + TRI_HEIGHT }
-		] : [
-			{ x: x - HALF_SIZE, y }, { x: x + HALF_SIZE, y }, { x, y: y + TRI_HEIGHT }
-		];
+		return up
+			? [
+					{ x, y },
+					{ x: x - HALF_SIZE, y: y + TRI_HEIGHT },
+					{ x: x + HALF_SIZE, y: y + TRI_HEIGHT }
+				]
+			: [
+					{ x: x - HALF_SIZE, y },
+					{ x: x + HALF_SIZE, y },
+					{ x, y: y + TRI_HEIGHT }
+				];
 	};
 
 	const getCentroid = (vertices: { x: number; y: number }[]) => ({
@@ -209,18 +316,36 @@
 	});
 
 	// Fast visibility check
-	const isVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform, bufferSize: number) => {
+	const isVisible = (
+		pos: { x: number; y: number },
+		transform: d3.ZoomTransform,
+		bufferSize: number
+	) => {
 		const screenPos = transform.apply([pos.x, pos.y]);
 		const buffer = bufferSize * transform.k;
-		return screenPos[0] > -buffer && screenPos[0] < window.innerWidth + buffer &&
-			   screenPos[1] > -buffer && screenPos[1] < window.innerHeight + buffer;
+		return (
+			screenPos[0] > -buffer &&
+			screenPos[0] < window.innerWidth + buffer &&
+			screenPos[1] > -buffer &&
+			screenPos[1] < window.innerHeight + buffer
+		);
 	};
 
 	// Music theory constants - optimized lookups
 	const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] as const;
 	const NOTE_TO_SEMITONE: Record<string, number> = {
-		'C': 0, 'C#': 1, 'D': 2, 'D#': 3, 'E': 4, 'F': 5,
-		'F#': 6, 'G': 7, 'G#': 8, 'A': 9, 'A#': 10, 'B': 11
+		C: 0,
+		'C#': 1,
+		D: 2,
+		'D#': 3,
+		E: 4,
+		F: 5,
+		'F#': 6,
+		G: 7,
+		'G#': 8,
+		A: 9,
+		'A#': 10,
+		B: 11
 	};
 
 	// Fast math functions
@@ -284,33 +409,54 @@
 		}
 	};
 
-	const INTERVAL_NAMES = ['Unison', 'Minor 2nd', 'Major 2nd', 'Minor 3rd', 'Major 3rd', 
-		'Perfect 4th', 'Tritone', 'Perfect 5th', 'Minor 6th', 'Major 6th', 'Minor 7th', 'Major 7th'];
-	const getIntervalDescription = (semitones: number) => INTERVAL_NAMES[semitones] || `${semitones} semitones`;
+	const INTERVAL_NAMES = [
+		'Unison',
+		'Minor 2nd',
+		'Major 2nd',
+		'Minor 3rd',
+		'Major 3rd',
+		'Perfect 4th',
+		'Tritone',
+		'Perfect 5th',
+		'Minor 6th',
+		'Major 6th',
+		'Minor 7th',
+		'Major 7th'
+	];
+	const getIntervalDescription = (semitones: number) =>
+		INTERVAL_NAMES[semitones] || `${semitones} semitones`;
 
-	// Highlight functions
-	const highlightChord = (name: string) => {
+	// Highlight functions - simplified to work with notes only
+	const highlightChord = (chordType: string) => {
+		// Get the notes that make up this chord
+		const chordNotes = getChordNotes(chordType);
+		
 		if (isShiftPressed) {
-			// Toggle selection when shift is held
-			if (selectedChords.has(name)) {
-				selectedChords.delete(name);
+			// Toggle selection: if all notes are selected, deselect them; otherwise select all
+			const allSelected = chordNotes.every(note => selectedNotes.has(note));
+			
+			if (allSelected) {
+				// Deselect all chord notes
+				chordNotes.forEach(note => selectedNotes.delete(note));
 			} else {
-				selectedChords.add(name);
+				// Select all chord notes
+				chordNotes.forEach(note => selectedNotes.add(note));
 			}
-			selectedChords = new Set(selectedChords); // Trigger reactivity
+			selectedNotes = new Set(selectedNotes); // Trigger reactivity
 		} else {
-			// Normal single selection
-			highlightedChord = name;
+			// Normal single selection: clear everything and select chord notes
 			highlightedNote = null;
-			selectedChords.clear();
 			selectedNotes.clear();
+			chordNotes.forEach(note => selectedNotes.add(note));
+			selectedNotes = new Set(selectedNotes); // Trigger reactivity
+			
 			// Force immediate highlight update during drag
 			if (isDragging && gridGroup) {
 				updateHighlightsOnly();
 			}
 		}
 	};
-	
+
 	const highlightNote = (name: string) => {
 		if (isShiftPressed) {
 			// Toggle selection when shift is held
@@ -323,8 +469,6 @@
 		} else {
 			// Normal single selection
 			highlightedNote = name;
-			highlightedChord = null;
-			selectedChords.clear();
 			selectedNotes.clear();
 			// Force immediate highlight update during drag
 			if (isDragging && gridGroup) {
@@ -332,15 +476,15 @@
 			}
 		}
 	};
-	
+
 	// Get notes that make up a chord
 	const getChordNotes = (chordType: string): string[] => {
 		if (!chordType || chordType === 'null') return [];
-		
+
 		// Parse chord type (e.g., "C-up" or "F#-down")
 		const [chordName, orientation] = chordType.split('-');
 		if (!chordName || !orientation) return [];
-		
+
 		// Find a triangle with this chord type to get its vertices
 		for (let row = -5; row <= 5; row++) {
 			for (let col = -5; col <= 5; col++) {
@@ -348,7 +492,7 @@
 				if (getTriangleType(row, col, isUp) === chordType) {
 					const pos = { x: col * spacing.col, y: row * spacing.row };
 					const vertices = getTriangleVertices(pos, isUp);
-					return vertices.map(v => {
+					return vertices.map((v) => {
 						const { q, r } = cartesianToHex(v.x, v.y);
 						return getPitchWithOctave(q, r, currentRootNote);
 					});
@@ -357,26 +501,26 @@
 		}
 		return [];
 	};
-	
+
 	// Get chord type from a set of notes
 	const getChordFromNotes = (notes: string[]): string | null => {
 		if (notes.length !== 3) return null;
-		
+
 		// Search for triangles that contain exactly these 3 notes
 		for (let row = -10; row <= 10; row++) {
 			for (let col = -10; col <= 10; col++) {
 				const isUp = (row + col) % 2 === 0;
 				const pos = { x: col * spacing.col, y: row * spacing.row };
 				const vertices = getTriangleVertices(pos, isUp);
-				const triangleNotes = vertices.map(v => {
+				const triangleNotes = vertices.map((v) => {
 					const { q, r } = cartesianToHex(v.x, v.y);
 					return getPitchWithOctave(q, r, currentRootNote);
 				});
-				
+
 				// Check if this triangle contains exactly the same notes
 				const sortedTriangleNotes = [...triangleNotes].sort();
 				const sortedInputNotes = [...notes].sort();
-				
+
 				if (JSON.stringify(sortedTriangleNotes) === JSON.stringify(sortedInputNotes)) {
 					return getTriangleType(row, col, isUp);
 				}
@@ -384,13 +528,13 @@
 		}
 		return null;
 	};
-	
+
 	// Get all possible 3-note combinations from an array
 	const getCombinations = (arr: string[], size: number): string[][] => {
 		if (size > arr.length) return [];
-		if (size === 1) return arr.map(item => [item]);
+		if (size === 1) return arr.map((item) => [item]);
 		if (size === arr.length) return [arr];
-		
+
 		const result: string[][] = [];
 		for (let i = 0; i <= arr.length - size; i++) {
 			const head = arr[i];
@@ -401,133 +545,343 @@
 		}
 		return result;
 	};
-	
+
 	const isChordHighlighted = (name: string) => {
-		// Direct chord highlighting
-		if (highlightedChord === name || selectedChords.has(name)) {
-			return true;
-		}
-		
 		// Get all currently highlighted/selected notes
 		const allNotes = getAllHighlightedNotes();
-		
+
+		// Add chord pattern notes to the check
+		const allNotesToCheck = [...allNotes];
+		if (highlightedPatternNotes.size > 0) {
+			for (const patternNote of highlightedPatternNotes) {
+				if (!allNotesToCheck.includes(patternNote)) {
+					allNotesToCheck.push(patternNote);
+				}
+			}
+		}
+
 		// Check if any 3-note combination forms this chord
-		if (allNotes.length >= 3) {
-			const combinations = getCombinations(allNotes, 3);
+		if (allNotesToCheck.length >= 3) {
+			const combinations = getCombinations(allNotesToCheck, 3);
 			for (const combination of combinations) {
 				const formedChord = getChordFromNotes(combination);
 				if (formedChord === name) return true;
 			}
 		}
-		
+
 		return false;
 	};
-	
+
 	const isNoteHighlighted = (name: string) => {
 		// Direct note highlighting
 		if (highlightedNote === name || selectedNotes.has(name)) {
 			return true;
 		}
-		
-		// Check if this note is part of any highlighted chord
-		if (highlightedChord) {
-			const chordNotes = getChordNotes(highlightedChord);
-			if (chordNotes.includes(name)) return true;
+
+		// Check if this note is part of chord pattern highlighting
+		if (highlightedPatternNotes.has(name)) {
+			return true;
 		}
-		
-		// Check if this note is part of any selected chords
-		for (const selectedChord of selectedChords) {
-			const chordNotes = getChordNotes(selectedChord);
-			if (chordNotes.includes(name)) return true;
-		}
-		
+
+		// Note: With simplified system, chord highlighting is automatic based on selected notes
+		// No need to check for chord-specific highlighting since notes are the source of truth
+
 		return false;
 	};
-	
+
 	// Get all currently highlighted/selected notes
 	const getAllHighlightedNotes = (): string[] => {
 		const notes = new Set<string>();
-		
+
 		// Add directly highlighted note
 		if (highlightedNote) notes.add(highlightedNote);
-		
+
 		// Add selected notes
 		for (const note of selectedNotes) {
 			notes.add(note);
 		}
-		
+
 		return Array.from(notes);
+	};
+	
+	// Get all chords that are currently highlighted (formed by selected notes)
+	const getHighlightedChords = (): string[] => {
+		const allNotes = getAllHighlightedNotes();
+		const allNotesToCheck = [...allNotes];
+		
+		// Add chord pattern notes to the check
+		if (highlightedPatternNotes.size > 0) {
+			for (const patternNote of highlightedPatternNotes) {
+				if (!allNotesToCheck.includes(patternNote)) {
+					allNotesToCheck.push(patternNote);
+				}
+			}
+		}
+		
+		const highlightedChords: string[] = [];
+		
+		// Check if any 3-note combination forms a chord
+		if (allNotesToCheck.length >= 3) {
+			const combinations = getCombinations(allNotesToCheck, 3);
+			for (const combination of combinations) {
+				const formedChord = getChordFromNotes(combination);
+				if (formedChord && !highlightedChords.includes(formedChord)) {
+					highlightedChords.push(formedChord);
+				}
+			}
+		}
+		
+		return highlightedChords;
+	};
+
+	// Get coordinate pattern from selected notes
+	const getCoordinatePattern = (): string => {
+		const allNotes = getAllHighlightedNotes();
+		if (allNotes.length === 0 && highlightedPatternNotes.size === 0) return '';
+
+		// Get coordinates for all highlighted notes
+		const coordinates: Array<[number, number]> = [];
+		const notesToCheck =
+			highlightedPatternNotes.size > 0 ? Array.from(highlightedPatternNotes) : allNotes;
+
+		// Find all note coordinates first - use a more direct approach
+		const noteCoords: Array<{ note: string; q: number; r: number }> = [];
+
+		// Search through visible grid area to find coordinates for each note
+		for (const noteName of notesToCheck) {
+			let found = false;
+			// Search in a reasonable range around the current view
+			for (let q = -20; q <= 20 && !found; q++) {
+				for (let r = -20; r <= 20 && !found; r++) {
+					const foundNote = getPitchWithOctave(q, r, currentRootNote);
+					if (foundNote === noteName) {
+						noteCoords.push({ note: noteName, q, r });
+						found = true;
+					}
+				}
+			}
+		}
+
+		// Find root note: use (0,0) if it exists, otherwise use the first note
+		let rootCoords: { q: number; r: number } | null = null;
+
+		// First try to find (0,0) as root
+		const zeroZero = noteCoords.find((nc) => nc.q === 0 && nc.r === 0);
+		if (zeroZero) {
+			rootCoords = { q: 0, r: 0 };
+		} else {
+			// Otherwise use the first note in the list as root
+			if (noteCoords.length > 0) {
+				rootCoords = { q: noteCoords[0].q, r: noteCoords[0].r };
+			}
+		}
+
+		if (!rootCoords) return '';
+
+		// Calculate relative coordinates from root
+		for (const { q, r } of noteCoords) {
+			coordinates.push([q - rootCoords.q, r - rootCoords.r]);
+		}
+
+		// Sort coordinates for consistent display
+		coordinates.sort((a, b) => (a[0] === b[0] ? a[1] - b[1] : a[0] - b[0]));
+
+		return JSON.stringify(coordinates);
+	};
+
+	// Get coordinate for a single note
+	const getCoordinateForNote = (noteName: string): string => {
+		// Find this note's coordinates
+		for (let row = -10; row <= 10; row++) {
+			for (let col = -10; col <= 10; col++) {
+				const pos = { x: col * spacing.col, y: row * spacing.row };
+				const { q, r } = cartesianToHex(pos.x, pos.y);
+				const foundNote = getPitchWithOctave(q, r, currentRootNote);
+				if (foundNote === noteName) {
+					return `(${q},${r})`;
+				}
+			}
+		}
+		return '(?,?)';
+	};
+	
+	// Get coordinate representation for a chord
+	const getChordCoordinates = (chordType: string): string => {
+		const chordNotes = getChordNotes(chordType);
+		if (chordNotes.length === 0) return 'Unknown chord';
+		
+		// Find coordinates for each note in the chord
+		const noteCoords: Array<{ note: string; q: number; r: number }> = [];
+		
+		for (const noteName of chordNotes) {
+			let found = false;
+			for (let q = -20; q <= 20 && !found; q++) {
+				for (let r = -20; r <= 20 && !found; r++) {
+					const foundNote = getPitchWithOctave(q, r, currentRootNote);
+					if (foundNote === noteName) {
+						noteCoords.push({ note: noteName, q, r });
+						found = true;
+					}
+				}
+			}
+		}
+		
+		// Find root note: use (0,0) if it exists, otherwise use the first note
+		let rootCoords: { q: number; r: number } | null = null;
+		const zeroZero = noteCoords.find((nc) => nc.q === 0 && nc.r === 0);
+		if (zeroZero) {
+			rootCoords = { q: 0, r: 0 };
+		} else if (noteCoords.length > 0) {
+			rootCoords = { q: noteCoords[0].q, r: noteCoords[0].r };
+		}
+		
+		if (!rootCoords) return 'Unknown coordinates';
+		
+		// Calculate relative coordinates from root
+		const coordinates: Array<[number, number]> = [];
+		for (const { q, r } of noteCoords) {
+			coordinates.push([q - rootCoords.q, r - rootCoords.r]);
+		}
+		
+		// Sort coordinates for consistent display
+		coordinates.sort((a, b) => (a[0] === b[0] ? a[1] - b[1] : a[0] - b[0]));
+		
+		return JSON.stringify(coordinates);
+	};
+
+	// Chord pattern functions
+	const applyChordPattern = (patternName: string, rootNote: string) => {
+		const pattern =
+			CONFIG.chordPatterns.presets[patternName as keyof typeof CONFIG.chordPatterns.presets];
+		if (!pattern) return;
+
+		selectedChordPattern = patternName;
+		chordPatternRoot = rootNote;
+
+		// Find root note coordinates
+		let rootCoords: { q: number; r: number } | null = null;
+		for (let row = -10; row <= 10; row++) {
+			for (let col = -10; col <= 10; col++) {
+				const pos = { x: col * spacing.col, y: row * spacing.row };
+				const { q, r } = cartesianToHex(pos.x, pos.y);
+				const noteName = getPitchWithOctave(q, r, currentRootNote);
+				if (noteName === rootNote) {
+					rootCoords = { q, r };
+					break;
+				}
+			}
+			if (rootCoords) break;
+		}
+
+		if (!rootCoords) return;
+
+		// Calculate pattern notes
+		const patternNotes = new Set<string>();
+		for (const [qOffset, rOffset] of pattern) {
+			const noteQ = rootCoords.q + qOffset;
+			const noteR = rootCoords.r + rOffset;
+			const noteName = getPitchWithOctave(noteQ, noteR, currentRootNote);
+			patternNotes.add(noteName);
+		}
+
+		highlightedPatternNotes = patternNotes;
+		// Force update
+		if (gridGroup) updateHighlightsOnly();
+	};
+
+	const clearChordPattern = () => {
+		selectedChordPattern = null;
+		chordPatternRoot = null;
+		highlightedPatternNotes = new Set();
+		if (gridGroup) updateHighlightsOnly();
 	};
 
 	function createGrid() {
 		updateViewport(currentTransform);
 	}
-	
+
 	// Fast highlight updates without full redraw
 	function updateHighlightsOnly() {
 		if (!gridGroup) return;
-		
+
 		// Update triangle highlights
-		gridGroup.selectAll('polygon').classed('highlighted-triangle', (d: any, i: number, nodes: any[]) => {
-			const element = d3.select(nodes[i]);
-			const triangleType = element.attr('data-triangle-type');
-			return triangleType && isChordHighlighted(triangleType);
-		});
-		
+		gridGroup
+			.selectAll('polygon')
+			.classed('highlighted-triangle', (d: any, i: number, nodes: any[]) => {
+				const element = d3.select(nodes[i]);
+				const triangleType = element.attr('data-triangle-type');
+				return triangleType && isChordHighlighted(triangleType);
+			});
+
 		// Update vertex highlights
-		gridGroup.selectAll('circle').classed('highlighted-vertex', (d: any, i: number, nodes: any[]) => {
-			const element = d3.select(nodes[i]);
-			const noteName = element.attr('data-note');
-			return noteName && isNoteHighlighted(noteName);
-		});
+		gridGroup
+			.selectAll('circle')
+			.classed('highlighted-vertex', (d: any, i: number, nodes: any[]) => {
+				const element = d3.select(nodes[i]);
+				const noteName = element.attr('data-note');
+				return noteName && isNoteHighlighted(noteName);
+			});
 	}
 
 	function updateViewport(transform: d3.ZoomTransform) {
 		currentTransform = transform;
 		gridGroup.selectAll('*').remove();
-		
+
 		// Create groups
-		const groups = ['triangles', 'vertices', 'inner-triangles', 'inner-circles', 'labels', 'vertex-labels']
-			.map(cls => gridGroup.append('g').attr('class', cls));
+		const groups = [
+			'triangles',
+			'vertices',
+			'inner-triangles',
+			'inner-circles',
+			'labels',
+			'vertex-labels'
+		].map((cls) => gridGroup.append('g').attr('class', cls));
 		const [triangles, vertices, innerTriangles, innerCircles, labels, vertexLabels] = groups;
-		
+
 		const uniqueVertices = new Set<string>();
 		const viewBounds = getVisibleBounds(transform);
-		const triangleData: Array<{pos: {x: number, y: number}, isUp: boolean, row: number, col: number}> = [];
-		const vertexData: Array<{pos: {x: number, y: number}, label: string}> = [];
-		
+		const triangleData: Array<{
+			pos: { x: number; y: number };
+			isUp: boolean;
+			row: number;
+			col: number;
+		}> = [];
+		const vertexData: Array<{ pos: { x: number; y: number }; label: string }> = [];
+
 		// Collect data
 		for (let row = viewBounds.minRow; row <= viewBounds.maxRow; row++) {
 			for (let col = viewBounds.minCol; col <= viewBounds.maxCol; col++) {
 				const pos = { x: col * spacing.col, y: row * spacing.row };
 				const isUp = (row + col) % 2 === 0;
-				
-				triangleData.push({pos, isUp, row, col});
-				
+
+				triangleData.push({ pos, isUp, row, col });
+
 				// Collect unique vertices
 				getTriangleVertices(pos, isUp).forEach((v) => {
 					const key = `${v.x.toFixed(1)},${v.y.toFixed(1)}`;
 					if (!uniqueVertices.has(key)) {
 						uniqueVertices.add(key);
 						const { q, r } = cartesianToHex(v.x, v.y);
-						const label = showMusicalLabels ? getPitchWithOctave(q, r, currentRootNote) : `(${q},${r})`;
-						vertexData.push({pos: v, label});
+						const label = showMusicalLabels
+							? getPitchWithOctave(q, r, currentRootNote)
+							: `(${q},${r})`;
+						vertexData.push({ pos: v, label });
 					}
 				});
 			}
 		}
-		
+
 		// Create elements
-		triangleData.forEach(({pos, isUp, row, col}) => {
+		triangleData.forEach(({ pos, isUp, row, col }) => {
 			createTriangleWithHover(triangles, innerTriangles, pos, isUp, row, col);
 			if (isTriangleVisible(pos, transform)) {
 				const info = showMusicalLabels ? getTriangleChord(row, col, isUp) : `(${row},${col})`;
-				const subtitle = showMusicalLabels ? (isUp ? 'minor' : 'major') : (isUp ? 'UP' : 'DOWN');
+				const subtitle = showMusicalLabels ? (isUp ? 'minor' : 'major') : isUp ? 'UP' : 'DOWN';
 				createLabel(labels, pos, isUp, info, subtitle);
 			}
 		});
-		
-		vertexData.forEach(({pos, label}) => {
+
+		vertexData.forEach(({ pos, label }) => {
 			createVertexWithHover(vertices, innerCircles, pos);
 			createVertexLabel(vertexLabels, pos, label);
 		});
@@ -592,10 +946,8 @@
 				if (isDragging && !isShiftPressed) {
 					// Highlight during drag (only in normal mode, not multi-select)
 					const triangleType = getTriangleType(row, col, up);
-					highlightedChord = triangleType;
-					highlightedNote = null;
-					// Force immediate update during drag
-					setTimeout(() => updateHighlightsOnly(), 0);
+					// Select the triangle's notes instead of highlighting chord directly
+					highlightChord(triangleType);
 				}
 				if (!innerTriangleElement) {
 					innerTriangleElement = createInnerTriangleElement(innerTriangleParent, pos, up);
@@ -664,7 +1016,13 @@
 				isDragging = true;
 				const { q, r } = cartesianToHex(pos.x, pos.y);
 				const noteName = getPitchWithOctave(q, r, currentRootNote);
-				highlightNote(noteName);
+
+				// If chord pattern is selected, apply it to this note
+				if (selectedChordPattern) {
+					applyChordPattern(selectedChordPattern, noteName);
+				} else {
+					highlightNote(noteName);
+				}
 			})
 			.on('mouseenter', () => {
 				if (isDragging && !isShiftPressed) {
@@ -672,7 +1030,6 @@
 					const { q, r } = cartesianToHex(pos.x, pos.y);
 					const noteName = getPitchWithOctave(q, r, currentRootNote);
 					highlightedNote = noteName;
-					highlightedChord = null;
 					// Force immediate update during drag
 					setTimeout(() => updateHighlightsOnly(), 0);
 				}
@@ -747,32 +1104,47 @@
 
 <!-- Control Panel -->
 <div class="control-panel">
-	<div class="highlight-info" class:inactive={!highlightedChord && !highlightedNote && selectedChords.size === 0 && selectedNotes.size === 0}>
-		{#if highlightedChord}
+	<div
+		class="highlight-info"
+		class:inactive={!highlightedNote &&
+			selectedNotes.size === 0 &&
+			highlightedPatternNotes.size === 0}
+	>
+		{#if getHighlightedChords().length > 0}
 			<span
-				>Playing: {highlightedChord.split('-')[0]}
-				{highlightedChord.includes('-up') ? '(minor)' : '(major)'}</span
+				>Playing: {showMusicalLabels ? getHighlightedChords().map(c => `${c.split('-')[0]} ${c.includes('-up') ? '(minor)' : '(major)'}`).join(', ') : getCoordinatePattern()}</span
 			>
 		{:else if highlightedNote}
-			<span>Playing: {highlightedNote}</span>
-		{:else if selectedChords.size > 0}
-			<span>Selected: {Array.from(selectedChords).map(c => c.split('-')[0]).join(', ')} ({selectedChords.size} chords)</span>
+			<span
+				>Playing: {showMusicalLabels
+					? highlightedNote
+					: getCoordinateForNote(highlightedNote)}</span
+			>
 		{:else if selectedNotes.size > 0}
-			<span>Selected: {Array.from(selectedNotes).join(', ')} ({selectedNotes.size} notes)</span>
+			<span
+				>Selected: {showMusicalLabels
+					? Array.from(selectedNotes).join(', ')
+					: getCoordinatePattern()} ({selectedNotes.size} notes)</span
+			>
+		{:else if selectedChordPattern && chordPatternRoot}
+			<span
+				>Pattern: {selectedChordPattern}
+				{showMusicalLabels ? `chord on ${chordPatternRoot}` : getCoordinatePattern()} ({highlightedPatternNotes.size}
+				notes)</span
+			>
 		{:else}
 			<span>Nothing playing{isShiftPressed ? ' - Hold Shift + Click to multi-select' : ''}</span>
 		{/if}
 	</div>
-	<div class="control-row">
-		<label>
-			<input type="checkbox" bind:checked={showMusicalLabels} />
-			Show Musical Labels
-		</label>
-		<label>
-			<input type="checkbox" bind:checked={singleOctave} />
-			Single Octave
-		</label>
-	</div>
+	<label>
+		<input type="checkbox" bind:checked={showMusicalLabels} />
+		Show Musical Labels
+	</label>
+
+	<label>
+		<input type="checkbox" bind:checked={singleOctave} />
+		Single Octave
+	</label>
 	<div class="control-row">
 		<label>
 			Root Note:
@@ -811,6 +1183,37 @@
 			<span class="interval-desc">{getIntervalDescription(rInterval)}</span>
 		</label>
 	</div>
+
+	<div class="control-row chord-patterns">
+		<span>Chord Patterns:</span>
+		<div class="pattern-grid">
+			{#each Object.keys(CONFIG.chordPatterns.presets) as patternName}
+				<button
+					class="pattern-btn"
+					class:active={selectedChordPattern === patternName}
+					on:click={() => {
+						if (selectedChordPattern === patternName) {
+							clearChordPattern();
+						} else if (highlightedNote) {
+							applyChordPattern(patternName, highlightedNote);
+						} else {
+							// Default to C if no note selected
+							applyChordPattern(patternName, singleOctave ? 'C' : 'C4');
+						}
+					}}
+				>
+					{patternName}
+				</button>
+			{/each}
+		</div>
+		{#if selectedChordPattern}
+			<div class="pattern-info">
+				<small
+					>Click a note to apply {selectedChordPattern} pattern, or click the button again to clear</small
+				>
+			</div>
+		{/if}
+	</div>
 </div>
 
 <div bind:this={container} class="tonnetz-container">
@@ -834,11 +1237,13 @@
 		padding: 12px;
 		border-radius: 8px;
 		color: white;
-		font: 11px Arial, sans-serif;
+		font:
+			11px Arial,
+			sans-serif;
 		display: flex;
 		flex-direction: column;
 		gap: 8px;
-		min-width: 240px;
+		min-width: 100px;
 		box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
 	}
 
@@ -905,6 +1310,47 @@
 		color: #aaa;
 		margin-left: 4px;
 		white-space: nowrap;
+	}
+
+	.chord-patterns {
+		flex-direction: column;
+		gap: 8px;
+		padding-top: 8px;
+		border-top: 1px solid #444;
+	}
+
+	.pattern-grid {
+		display: grid;
+		grid-template-columns: repeat(2, 1fr);
+		gap: 4px;
+	}
+
+	.pattern-btn {
+		padding: 4px 6px;
+		border: 1px solid #555;
+		border-radius: 3px;
+		background: #333;
+		color: white;
+		font-size: 9px;
+		cursor: pointer;
+		transition: all 0.2s ease;
+	}
+
+	.pattern-btn:hover {
+		background: #444;
+		border-color: #666;
+	}
+
+	.pattern-btn.active {
+		background: #ff6b35;
+		border-color: #ff6b35;
+		color: white;
+	}
+
+	.pattern-info {
+		color: #aaa;
+		font-size: 8px;
+		line-height: 1.2;
 	}
 
 	.control-panel select:focus,
