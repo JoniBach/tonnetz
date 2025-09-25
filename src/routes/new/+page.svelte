@@ -38,7 +38,9 @@
 		},
 		music: {
 			rootNote: 'C', // Configurable root note
-			showMusicalLabels: true // Toggle between musical and coordinate labels
+			showMusicalLabels: true, // Toggle between musical and coordinate labels
+			singleOctave: true, // Toggle between single octave (C, D, E...) and multi-octave (C2, D3, E4...)
+			octaveRange: { min: 0, max: 8 } // Range of octaves to display when singleOctave is false
 		},
 		tonnetz: {
 			// Configurable tonnetz formula: pitchClass = root + qInterval * q + rInterval * r
@@ -69,6 +71,7 @@
 	// Reactive variables
 	let currentRootNote = CONFIG.music.rootNote;
 	let showMusicalLabels = true;
+	let singleOctave = CONFIG.music.singleOctave;
 	let currentTonnetzName = CONFIG.tonnetz.name;
 	let qInterval = CONFIG.tonnetz.qInterval;
 	let rInterval = CONFIG.tonnetz.rInterval;
@@ -78,48 +81,34 @@
 	let highlightedNote: string | null = null;
 	let isDragging = false;
 
-	// Performance constants - cached once
+	// Cached constants for performance
 	const SQRT3 = Math.sqrt(3);
 	const { baseTriangleSize, gridExtent, innerTriangle } = CONFIG;
 	const HALF_SIZE = baseTriangleSize * 0.5;
 	const TRI_HEIGHT = baseTriangleSize * SQRT3 * 0.5;
 	const spacing = { row: TRI_HEIGHT, col: HALF_SIZE };
-	const gridBounds = { width: gridExtent * spacing.col, height: gridExtent * spacing.row };
 	const scale = innerTriangle.size / baseTriangleSize;
-	const HEX_Y_FACTOR = TRI_HEIGHT;
 
-	// Reactive statement to update grid when parameters change
-	$: if (
-		svg &&
-		(currentRootNote ||
-			showMusicalLabels !== undefined ||
-			qInterval ||
-			rInterval ||
-			highlightedChord ||
-			highlightedNote)
-	) {
+	// Reactive grid updates
+	$: if (svg && (currentRootNote || showMusicalLabels !== undefined || singleOctave !== undefined || qInterval || rInterval || highlightedChord || highlightedNote)) {
 		updateViewport(currentTransform);
 	}
 
-	// Reactive statement to update CSS custom properties for highlights
+	// Update CSS custom properties
 	$: if (container) {
-		const fillColor = CONFIG.highlight.color.replace('#', '');
-		const r = parseInt(fillColor.substr(0, 2), 16);
-		const g = parseInt(fillColor.substr(2, 2), 16);
-		const b = parseInt(fillColor.substr(4, 2), 16);
-		const fillRgba = `rgba(${r}, ${g}, ${b}, ${CONFIG.highlight.fillOpacity})`;
-
-		container.style.setProperty('--highlight-color-value', CONFIG.highlight.color);
-		container.style.setProperty(
-			'--highlight-stroke-width-value',
-			CONFIG.highlight.strokeWidth.toString()
-		);
-		container.style.setProperty('--highlight-fill-value', fillRgba);
-		container.style.setProperty(
-			'--highlight-transition-duration-value',
-			`${CONFIG.highlight.transitionDuration}s`
-		);
-		container.style.setProperty('--highlight-easing-value', CONFIG.highlight.easing);
+		const { color, strokeWidth, fillOpacity, transitionDuration, easing } = CONFIG.highlight;
+		const hex = color.slice(1);
+		const r = parseInt(hex.slice(0, 2), 16);
+		const g = parseInt(hex.slice(2, 4), 16);
+		const b = parseInt(hex.slice(4, 6), 16);
+		
+		Object.assign(container.style, {
+			'--highlight-color-value': color,
+			'--highlight-stroke-width-value': strokeWidth.toString(),
+			'--highlight-fill-value': `rgba(${r}, ${g}, ${b}, ${fillOpacity})`,
+			'--highlight-transition-duration-value': `${transitionDuration}s`,
+			'--highlight-easing-value': easing
+		});
 	}
 
 	onMount(() => {
@@ -159,8 +148,8 @@
 			.zoom()
 			.scaleExtent([1 / CONFIG.zoomRange, CONFIG.zoomRange])
 			.translateExtent([
-				[-gridBounds.width / 2, -gridBounds.height / 2],
-				[gridBounds.width / 2, gridBounds.height / 2]
+				[-(gridExtent * spacing.col) / 2, -(gridExtent * spacing.row) / 2],
+				[(gridExtent * spacing.col) / 2, (gridExtent * spacing.row) / 2]
 			])
 			.filter((e: any) => e.button === 2 || e.type === 'wheel' || e.type === 'dblclick')
 			.on('zoom', (e: d3.D3ZoomEvent<SVGSVGElement, unknown>) => {
@@ -204,10 +193,19 @@
 
 	// Fast math functions
 	const mod12 = (n: number) => ((n % 12) + 12) % 12;
-	const pitchClass = (q: number, r: number, root = 0) => mod12(root + qInterval * q + rInterval * r);
-	const getNoteFromCoords = (q: number, r: number, rootNote: string) => NOTES[pitchClass(q, r, NOTE_TO_SEMITONE[rootNote])];
+	const pitchClass = (q: number, r: number, root = 0) => root + qInterval * q + rInterval * r;
+	const getPitchWithOctave = (q: number, r: number, rootNote: string) => {
+		const fullPitch = pitchClass(q, r, NOTE_TO_SEMITONE[rootNote]);
+		if (singleOctave) {
+			return NOTES[mod12(fullPitch)];
+		} else {
+			const octave = Math.floor(fullPitch / 12) + 4; // Center around octave 4
+			const noteClass = mod12(fullPitch);
+			return `${NOTES[noteClass]}${octave}`;
+		}
+	};
 	const cartesianToHex = (x: number, y: number) => {
-		const r = Math.round(y / HEX_Y_FACTOR);
+		const r = Math.round(y / TRI_HEIGHT);
 		return { q: Math.round(x / baseTriangleSize - r * 0.5), r };
 	};
 
@@ -217,7 +215,8 @@
 		const vertices = getTriangleVertices(pos, isUp);
 		const pitchClasses = vertices.map((v) => {
 			const { q, r } = cartesianToHex(v.x, v.y);
-			return NOTE_TO_SEMITONE[getNoteFromCoords(q, r, currentRootNote)];
+			const fullPitch = pitchClass(q, r, NOTE_TO_SEMITONE[currentRootNote]);
+			return mod12(fullPitch); // Always use mod12 for chord detection
 		});
 
 		// Check each note as potential root
@@ -243,8 +242,7 @@
 		return `${chordName}-${triangleOrientation}`;
 	}
 
-	// Function to handle tonnetz preset changes
-	// Optimized preset and interval functions
+	// Utility functions
 	const changeTonnetzPreset = (presetName: string) => {
 		const preset = CONFIG.tonnetz.presets[presetName as keyof typeof CONFIG.tonnetz.presets];
 		if (preset) {
@@ -258,7 +256,7 @@
 		'Perfect 4th', 'Tritone', 'Perfect 5th', 'Minor 6th', 'Major 6th', 'Minor 7th', 'Major 7th'];
 	const getIntervalDescription = (semitones: number) => INTERVAL_NAMES[semitones] || `${semitones} semitones`;
 
-	// Simplified highlight functions
+	// Highlight functions
 	const highlightChord = (name: string) => { highlightedChord = name; highlightedNote = null; };
 	const highlightNote = (name: string) => { highlightedNote = name; highlightedChord = null; };
 	const isChordHighlighted = (name: string) => highlightedChord === name;
@@ -272,22 +270,17 @@
 		currentTransform = transform;
 		gridGroup.selectAll('*').remove();
 		
-		// Create groups once
-		const triangles = gridGroup.append('g').attr('class', 'triangles');
-		const vertices = gridGroup.append('g').attr('class', 'vertices');
-		const innerTriangles = gridGroup.append('g').attr('class', 'inner-triangles');
-		const innerCircles = gridGroup.append('g').attr('class', 'inner-circles');
-		const labels = gridGroup.append('g').attr('class', 'labels');
-		const vertexLabels = gridGroup.append('g').attr('class', 'vertex-labels');
+		// Create groups
+		const groups = ['triangles', 'vertices', 'inner-triangles', 'inner-circles', 'labels', 'vertex-labels']
+			.map(cls => gridGroup.append('g').attr('class', cls));
+		const [triangles, vertices, innerTriangles, innerCircles, labels, vertexLabels] = groups;
 		
 		const uniqueVertices = new Set<string>();
 		const viewBounds = getVisibleBounds(transform);
-		
-		// Batch DOM operations for better performance
 		const triangleData: Array<{pos: {x: number, y: number}, isUp: boolean, row: number, col: number}> = [];
 		const vertexData: Array<{pos: {x: number, y: number}, label: string}> = [];
 		
-		// Collect data first
+		// Collect data
 		for (let row = viewBounds.minRow; row <= viewBounds.maxRow; row++) {
 			for (let col = viewBounds.minCol; col <= viewBounds.maxCol; col++) {
 				const pos = { x: col * spacing.col, y: row * spacing.row };
@@ -301,14 +294,14 @@
 					if (!uniqueVertices.has(key)) {
 						uniqueVertices.add(key);
 						const { q, r } = cartesianToHex(v.x, v.y);
-						const label = showMusicalLabels ? getNoteFromCoords(q, r, currentRootNote) : `(${q},${r})`;
+						const label = showMusicalLabels ? getPitchWithOctave(q, r, currentRootNote) : `(${q},${r})`;
 						vertexData.push({pos: v, label});
 					}
 				});
 			}
 		}
 		
-		// Batch create triangles
+		// Create elements
 		triangleData.forEach(({pos, isUp, row, col}) => {
 			createTriangleWithHover(triangles, innerTriangles, pos, isUp, row, col);
 			if (isTriangleVisible(pos, transform)) {
@@ -318,21 +311,20 @@
 			}
 		});
 		
-		// Batch create vertices
 		vertexData.forEach(({pos, label}) => {
 			createVertexWithHover(vertices, innerCircles, pos);
 			createVertexLabel(vertexLabels, pos, label);
 		});
 	}
 
-	// Optimized visibility functions
+	// Visibility functions
 	const isTriangleVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform) =>
 		isVisible(pos, transform, baseTriangleSize);
 
-	function getVisibleBounds(transform: d3.ZoomTransform) {
+	const getVisibleBounds = (transform: d3.ZoomTransform) => {
 		const [width, height] = [window.innerWidth, window.innerHeight];
 		const [topLeft, bottomRight] = [transform.invert([0, 0]), transform.invert([width, height])];
-		const buffer = baseTriangleSize * 1.5; // Reduced buffer for better performance
+		const buffer = baseTriangleSize * 1.5;
 
 		return {
 			minRow: Math.floor((topLeft[1] - buffer) / spacing.row),
@@ -340,7 +332,7 @@
 			minCol: Math.floor((topLeft[0] - buffer) / spacing.col),
 			maxCol: Math.ceil((bottomRight[0] + buffer) / spacing.col)
 		};
-	}
+	};
 
 	function createTriangleWithHover(
 		triangleParent: d3.Selection<SVGGElement, unknown, null, undefined>,
@@ -373,6 +365,7 @@
 				}
 			})
 			.on('mousedown', (event: MouseEvent) => {
+				if (event.button !== 0) return; // Only respond to left-click
 				event.preventDefault();
 				isDragging = true;
 				const triangleType = getTriangleType(row, col, up);
@@ -432,7 +425,7 @@
 			.style('cursor', 'pointer')
 			.classed('highlighted-vertex', () => {
 				const { q, r } = cartesianToHex(pos.x, pos.y);
-				const noteName = getNoteFromCoords(q, r, currentRootNote);
+				const noteName = getPitchWithOctave(q, r, currentRootNote);
 				return isNoteHighlighted(noteName);
 			})
 			.on('mouseleave', () => {
@@ -442,17 +435,18 @@
 				}
 			})
 			.on('mousedown', (event: MouseEvent) => {
+				if (event.button !== 0) return; // Only respond to left-click
 				event.preventDefault();
 				isDragging = true;
 				const { q, r } = cartesianToHex(pos.x, pos.y);
-				const noteName = getNoteFromCoords(q, r, currentRootNote);
+				const noteName = getPitchWithOctave(q, r, currentRootNote);
 				highlightNote(noteName);
 			})
 			.on('mouseenter', () => {
 				if (isDragging) {
 					// Highlight during drag
 					const { q, r } = cartesianToHex(pos.x, pos.y);
-					const noteName = getNoteFromCoords(q, r, currentRootNote);
+					const noteName = getPitchWithOctave(q, r, currentRootNote);
 					highlightNote(noteName);
 				}
 				if (!innerCircleElement) {
@@ -461,7 +455,7 @@
 			});
 	}
 
-	// Optimized element creation functions
+	// Element creation functions
 	const createInnerCircleElement = (
 		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
 		pos: { x: number; y: number }
@@ -543,6 +537,10 @@
 			<input type="checkbox" bind:checked={showMusicalLabels} />
 			Show Musical Labels
 		</label>
+		<label>
+			<input type="checkbox" bind:checked={singleOctave} />
+			Single Octave
+		</label>
 	</div>
 	<div class="control-row">
 		<label>
@@ -605,8 +603,7 @@
 		padding: 12px;
 		border-radius: 8px;
 		color: white;
-		font-family: Arial, sans-serif;
-		font-size: 11px;
+		font: 11px Arial, sans-serif;
 		display: flex;
 		flex-direction: column;
 		gap: 8px;
@@ -654,7 +651,6 @@
 		align-items: center;
 		gap: 6px;
 		cursor: pointer;
-		font-size: 11px;
 	}
 
 	.control-panel select,
@@ -674,15 +670,10 @@
 	}
 
 	.interval-desc {
-		font-size: 9px;
+		font: italic 9px Arial;
 		color: #aaa;
 		margin-left: 4px;
-		font-style: italic;
 		white-space: nowrap;
-	}
-
-	.control-panel input[type='checkbox'] {
-		transform: scale(1);
 	}
 
 	.control-panel select:focus,
@@ -711,12 +702,11 @@
 		-ms-user-select: none; /* IE/Edge */
 	}
 
-	/* Highlight styles - using CONFIG values */
+	/* Highlight styles */
 	:global(.highlighted-triangle) {
 		stroke: var(--highlight-color, #ff6b35) !important;
 		stroke-width: var(--highlight-stroke-width, 2) !important;
 		fill: var(--highlight-fill, rgba(255, 107, 53, 0.1)) !important;
-		opacity: 1 !important;
 		transition: all var(--highlight-transition-duration, 0.1s) var(--highlight-easing, ease);
 	}
 
@@ -724,16 +714,6 @@
 		fill: var(--highlight-color, #ff6b35) !important;
 		stroke: var(--highlight-color, #ff6b35) !important;
 		stroke-width: var(--highlight-stroke-width, 2) !important;
-		opacity: 1 !important;
 		transition: all var(--highlight-transition-duration, 0.1s) var(--highlight-easing, ease);
-	}
-
-	/* Hover effects during selection */
-	:global(.tonnetz-container) {
-		cursor: default;
-	}
-
-	:global(.tonnetz-container.dragging) {
-		cursor: crosshair;
 	}
 </style>
