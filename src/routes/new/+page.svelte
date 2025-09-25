@@ -15,15 +15,15 @@
 		innerTriangle: {
 			size: 80,
 			strokeWidth: 0.2,
-			strokeColor: '#222',
-			fillColor: '#111',
+			strokeColor: '#111',
+			fillColor: '#1f1f1f',
 			opacity: 0.8
 		},
 		innerCircle: {
-			diameter: 20,
+			diameter: 25,
 			strokeWidth: 0.2,
-			strokeColor: '#222',
-			fillColor: '#111',
+			strokeColor: '#111',
+			fillColor: '#1f1f1f',
 			opacity: 0.9
 		},
 		label: {
@@ -40,12 +40,29 @@
 			rootNote: 'C', // Configurable root note
 			showMusicalLabels: true // Toggle between musical and coordinate labels
 		},
+		tonnetz: {
+			// Configurable tonnetz formula: pitchClass = root + qInterval * q + rInterval * r
+			qInterval: 7, // Perfect fifth (7 semitones) - horizontal movement
+			rInterval: 4, // Major third (4 semitones) - diagonal movement
+			name: 'Neo-Riemannian', // Display name for current configuration
+			presets: {
+				'Neo-Riemannian': { qInterval: 7, rInterval: 4 }, // Classic 3,4,5 tonnetz
+				Chromatic: { qInterval: 1, rInterval: 1 }, // Chromatic lattice
+				'Whole Tone': { qInterval: 2, rInterval: 2 }, // Whole tone lattice
+				Quartal: { qInterval: 5, rInterval: 5 }, // Fourth-based lattice
+				Augmented: { qInterval: 4, rInterval: 8 }, // Augmented triad lattice
+				'Shepard Tone': { qInterval: 12, rInterval: 7 } // Octave + fifth lattice
+			}
+		},
 		background: '#1a1a1a'
 	};
 
 	// Reactive variables
 	let currentRootNote = CONFIG.music.rootNote;
 	let showMusicalLabels = true;
+	let currentTonnetzName = CONFIG.tonnetz.name;
+	let qInterval = CONFIG.tonnetz.qInterval;
+	let rInterval = CONFIG.tonnetz.rInterval;
 
 	// Cached constants for performance
 	const SQRT3 = Math.sqrt(3);
@@ -57,8 +74,8 @@
 	const scale = innerTriangle.size / baseTriangleSize;
 	const hexYFactor = (baseTriangleSize * SQRT3) / 2;
 
-	// Reactive statement to update grid when root note changes
-	$: if (svg && (currentRootNote || showMusicalLabels !== undefined)) {
+	// Reactive statement to update grid when parameters change
+	$: if (svg && (currentRootNote || showMusicalLabels !== undefined || qInterval || rInterval)) {
 		updateViewport(currentTransform);
 	}
 
@@ -150,7 +167,7 @@
 
 	// Optimized utility functions
 	const mod = (n: number, m = 12) => ((n % m) + m) % m;
-	const pitchClass = (q: number, r: number, root = 0) => mod(root + 7 * q + 4 * r);
+	const pitchClass = (q: number, r: number, root = 0) => mod(root + qInterval * q + rInterval * r);
 	const pcToName = (pc: number) => NOTES[mod(pc)];
 	const getNoteFromCoords = (q: number, r: number, rootNote: string) =>
 		pcToName(pitchClass(q, r, NOTE_TO_SEMITONE[rootNote]));
@@ -183,6 +200,34 @@
 		}
 
 		return `${NOTES[pitchClasses[0]]}?`;
+	}
+
+	// Function to handle tonnetz preset changes
+	function changeTonnetzPreset(presetName: string) {
+		const preset = CONFIG.tonnetz.presets[presetName as keyof typeof CONFIG.tonnetz.presets];
+		if (preset) {
+			currentTonnetzName = presetName;
+			qInterval = preset.qInterval;
+			rInterval = preset.rInterval;
+		}
+	}
+
+	// Function to get interval description
+	function getIntervalDescription(semitones: number): string {
+		const intervalNames: { [key: number]: string } = {
+			1: 'Minor 2nd',
+			2: 'Major 2nd',
+			3: 'Minor 3rd',
+			4: 'Major 3rd',
+			5: 'Perfect 4th',
+			6: 'Tritone',
+			7: 'Perfect 5th',
+			8: 'Minor 6th',
+			9: 'Major 6th',
+			10: 'Minor 7th',
+			11: 'Major 7th'
+		};
+		return intervalNames[semitones] || `${semitones} semitones`;
 	}
 
 	function createGrid() {
@@ -405,19 +450,50 @@
 
 <!-- Control Panel -->
 <div class="control-panel">
-	<label>
-		Root Note:
-		<select bind:value={currentRootNote}>
-			{#each NOTES as note}
-				<option value={note}>{note}</option>
-			{/each}
-		</select>
-	</label>
+	<div class="control-row">
+		<label>
+			<input type="checkbox" bind:checked={showMusicalLabels} />
+			Show Musical Labels
+		</label>
+	</div>
+	<div class="control-row">
+		<label>
+			Root Note:
+			<select bind:value={currentRootNote}>
+				{#each NOTES as note}
+					<option value={note}>{note}</option>
+				{/each}
+			</select>
+		</label>
+	</div>
 
-	<label>
-		<input type="checkbox" bind:checked={showMusicalLabels} />
-		Show Musical Labels
-	</label>
+	<div class="control-row">
+		<label>
+			Tonnetz Type:
+			<select
+				bind:value={currentTonnetzName}
+				on:change={(e) => changeTonnetzPreset((e.target as HTMLSelectElement)?.value || '')}
+			>
+				{#each Object.keys(CONFIG.tonnetz.presets) as presetName}
+					<option value={presetName}>{presetName}</option>
+				{/each}
+			</select>
+		</label>
+	</div>
+
+	<div class="control-row custom-intervals">
+		<label>
+			Q Interval:
+			<input type="number" min="1" max="11" bind:value={qInterval} />
+			<span class="interval-desc">{getIntervalDescription(qInterval)}</span>
+		</label>
+
+		<label>
+			R Interval:
+			<input type="number" min="1" max="11" bind:value={rInterval} />
+			<span class="interval-desc">{getIntervalDescription(rInterval)}</span>
+		</label>
+	</div>
 </div>
 
 <div bind:this={container} class="tonnetz-container">
@@ -434,38 +510,77 @@
 
 	.control-panel {
 		position: fixed;
-		top: 20px;
-		left: 20px;
+		top: 10px;
+		left: 10px;
 		z-index: 1000;
-		background: rgba(0, 0, 0, 0.8);
-		padding: 15px;
+		background: rgba(0, 0, 0, 0.9);
+		padding: 12px;
 		border-radius: 8px;
 		color: white;
 		font-family: Arial, sans-serif;
-		font-size: 14px;
+		font-size: 11px;
 		display: flex;
-		gap: 20px;
+		flex-direction: column;
+		gap: 8px;
+		min-width: 240px;
+		box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+	}
+
+	.control-row {
+		display: flex;
+		gap: 12px;
 		align-items: center;
+		flex-wrap: wrap;
+	}
+
+	.custom-intervals {
+		flex-direction: column;
+		gap: 6px;
+		padding-top: 6px;
+		border-top: 1px solid #444;
 	}
 
 	.control-panel label {
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		gap: 6px;
 		cursor: pointer;
+		font-size: 11px;
 	}
 
-	.control-panel select {
-		padding: 4px 8px;
+	.control-panel select,
+	.control-panel input[type='number'] {
+		padding: 4px 6px;
 		border-radius: 4px;
 		border: 1px solid #555;
 		background: #333;
 		color: white;
-		font-size: 14px;
+		font-size: 10px;
+		min-width: 45px;
+	}
+
+	.control-panel input[type='number'] {
+		width: 45px;
+		text-align: center;
+	}
+
+	.interval-desc {
+		font-size: 9px;
+		color: #aaa;
+		margin-left: 4px;
+		font-style: italic;
+		white-space: nowrap;
 	}
 
 	.control-panel input[type='checkbox'] {
-		transform: scale(1.2);
+		transform: scale(1);
+	}
+
+	.control-panel select:focus,
+	.control-panel input:focus {
+		outline: none;
+		border-color: #666;
+		box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.1);
 	}
 
 	.tonnetz-container {
