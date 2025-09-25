@@ -43,21 +43,27 @@
 		background: '#1a1a1a'
 	};
 
-	// Reactive variables for dynamic configuration
+	// Reactive variables
 	let currentRootNote = CONFIG.music.rootNote;
-	let showMusicalLabels = false; // Debug with coordinates first
+	let showMusicalLabels = true;
+
+	// Cached constants for performance
+	const SQRT3 = Math.sqrt(3);
+	const triangleHeight = (CONFIG.baseTriangleSize * SQRT3) / 2;
+	const spacing = { row: triangleHeight, col: CONFIG.baseTriangleSize / 2 };
+	const gridBounds = {
+		width: CONFIG.gridExtent * spacing.col,
+		height: CONFIG.gridExtent * spacing.row
+	};
+	const half = CONFIG.baseTriangleSize / 2;
+	const scale = CONFIG.innerTriangle.size / CONFIG.baseTriangleSize;
+	const hexSize = CONFIG.baseTriangleSize;
+	const hexYFactor = (hexSize * SQRT3) / 2;
 
 	// Reactive statement to update grid when root note changes
 	$: if (svg && (currentRootNote || showMusicalLabels !== undefined)) {
 		updateViewport(currentTransform);
 	}
-
-	// Computed constants
-	const triangleHeight = (CONFIG.baseTriangleSize * Math.sqrt(3)) / 2;
-	const spacing = { row: triangleHeight, col: CONFIG.baseTriangleSize / 2 };
-	const gridBounds = { width: CONFIG.gridExtent * spacing.col, height: CONFIG.gridExtent * spacing.row };
-	const half = CONFIG.baseTriangleSize / 2;
-	const scale = CONFIG.innerTriangle.size / CONFIG.baseTriangleSize;
 
 	onMount(() => {
 		const [width, height] = [window.innerWidth, window.innerHeight];
@@ -109,8 +115,16 @@
 	const getTriangleVertices = (pos: { x: number; y: number }, up: boolean) => {
 		const { x, y } = pos;
 		return up
-			? [{ x, y }, { x: x - half, y: y + triangleHeight }, { x: x + half, y: y + triangleHeight }]
-			: [{ x: x - half, y }, { x: x + half, y }, { x, y: y + triangleHeight }];
+			? [
+					{ x, y },
+					{ x: x - half, y: y + triangleHeight },
+					{ x: x + half, y: y + triangleHeight }
+				]
+			: [
+					{ x: x - half, y },
+					{ x: x + half, y },
+					{ x, y: y + triangleHeight }
+				];
 	};
 
 	const getCentroid = (vertices: { x: number; y: number }[]) => ({
@@ -118,39 +132,80 @@
 		y: (vertices[0].y + vertices[1].y + vertices[2].y) / 3
 	});
 
-	const isVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform, bufferSize: number) => {
+	const isVisible = (
+		pos: { x: number; y: number },
+		transform: d3.ZoomTransform,
+		bufferSize: number
+	) => {
 		const screenPos = transform.apply([pos.x, pos.y]);
 		const [width, height] = [window.innerWidth, window.innerHeight];
 		const buffer = bufferSize * transform.k;
-		return screenPos[0] > -buffer && screenPos[0] < width + buffer && screenPos[1] > -buffer && screenPos[1] < height + buffer;
+		return (
+			screenPos[0] > -buffer &&
+			screenPos[0] < width + buffer &&
+			screenPos[1] > -buffer &&
+			screenPos[1] < height + buffer
+		);
 	};
 
 	// Tonnetz Mathematical Formula Implementation
 	// Based on: Pitch(q, r; root) = (root + 7q + 4r) mod 12
-	
 	const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 	const NOTE_TO_SEMITONE = Object.fromEntries(NOTES.map((note, i) => [note, i]));
 
-	// Safe modulo function (handles negative numbers correctly)
+	// Optimized modulo and tonnetz functions
 	const mod = (n: number, m: number = 12) => ((n % m) + m) % m;
+	const pitchClass = (q: number, r: number, root: number = 0) => mod(root + 7 * q + 4 * r);
+	const pcToName = (pc: number) => NOTES[mod(pc)];
 
-	// Core tonnetz function: compute pitch class from lattice coordinates
-	function pitchClass(q: number, r: number, root: number = 0): number {
-		return mod(root + 7 * q + 4 * r, 12);
-	}
-
-	// Convert pitch class number to note name
-	function pcToName(pc: number, preferFlats: boolean = false): string {
-		const sharps = NOTES;
-		const flats = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
-		return preferFlats ? flats[mod(pc, 12)] : sharps[mod(pc, 12)];
-	}
-
-	// Get note from tonnetz coordinates with configurable root
-	function getNoteFromTonnetzCoords(q: number, r: number, rootNote: string = 'C'): string {
+	// Get note from tonnetz coordinates
+	function getNoteFromCoords(q: number, r: number, rootNote: string): string {
 		const rootSemitone = NOTE_TO_SEMITONE[rootNote];
-		const pc = pitchClass(q, r, rootSemitone);
-		return pcToName(pc);
+		return pcToName(pitchClass(q, r, rootSemitone));
+	}
+
+	// Convert cartesian to hex coordinates (optimized)
+	function cartesianToHex(x: number, y: number): { q: number; r: number } {
+		const r = Math.round(y / hexYFactor);
+		const q = Math.round(x / hexSize - r / 2);
+		return { q, r };
+	}
+
+	// Get chord information for triangle by analyzing all three notes
+	function getTriangleChord(row: number, col: number, isUp: boolean): string {
+		const pos = { x: col * spacing.col, y: row * spacing.row };
+		const vertices = getTriangleVertices(pos, isUp);
+
+		// Get all three notes
+		const notes = vertices.map((v) => {
+			const { q, r } = cartesianToHex(v.x, v.y);
+			return getNoteFromCoords(q, r, currentRootNote);
+		});
+
+		// Get pitch classes (unsorted to preserve order)
+		const pitchClasses = notes.map((note) => NOTE_TO_SEMITONE[note]);
+
+		// Try each note as potential root and check if it forms a major or minor triad
+		for (let i = 0; i < 3; i++) {
+			const root = pitchClasses[i];
+			const otherNotes = pitchClasses.filter((_, idx) => idx !== i);
+
+			// Calculate intervals from this potential root
+			const intervals = otherNotes.map((note) => mod(note - root)).sort((a, b) => a - b);
+
+			// Check for major triad: root + major third (4) + perfect fifth (7)
+			if (intervals.length === 2 && intervals[0] === 4 && intervals[1] === 7) {
+				return NOTES[root]; // Major chord
+			}
+
+			// Check for minor triad: root + minor third (3) + perfect fifth (7)
+			if (intervals.length === 2 && intervals[0] === 3 && intervals[1] === 7) {
+				return `${NOTES[root]}`; // Minor chord
+			}
+		}
+
+		// If no standard triad found, return first note with ?
+		return `${notes[0]}?`;
 	}
 
 	function createGrid() {
@@ -164,56 +219,44 @@
 			.fill(0)
 			.map(() => gridGroup.append('g'));
 		const uniqueVertices = new Set<string>();
-		const vertexPositions: { x: number; y: number; label: string }[] = [];
 
-		// Render triangles and extract their vertices with proper tonnetz mapping
-		for (let row = -CONFIG.gridExtent; row < CONFIG.gridExtent; row++) {
-			for (let col = -CONFIG.gridExtent; col < CONFIG.gridExtent; col++) {
-				const pos = { x: col * spacing.col, y: row * spacing.row };
-				const isUp = (row + col) % 2 === 0;
-				
-				// Create triangles
-				createTriangleWithHover(triangles, innerTriangles, pos, isUp, row, col).forEach((v, index) => {
-					const key = `${v.x.toFixed(2)},${v.y.toFixed(2)}`;
-					if (!uniqueVertices.has(key)) {
-						uniqueVertices.add(key);
-						
-						// Simple coordinate mapping to understand the pattern
-						const gridX = Math.round(v.x / spacing.col);
-						const gridY = Math.round(v.y / spacing.row);
-						
-						let vertexLabel: string;
-						if (showMusicalLabels) {
-							// For now, just use gridX as q coordinate (horizontal = fifths)
-							vertexLabel = getNoteFromTonnetzCoords(gridX, 0, currentRootNote);
-						} else {
-							vertexLabel = `${gridX},${gridY}`;
-						}
-						
-						createVertexWithHover(vertices, innerCircles, v);
-						createVertexLabel(vertexLabels, v, vertexLabel);
-						vertexPositions.push({ ...v, label: vertexLabel });
-					}
-				});
-			}
-		}
-
-		// Render detail features (culled) - labels only, inner triangles on hover
+		// Optimized grid rendering with viewport culling
 		const viewBounds = getVisibleBounds(transform);
 		for (let row = viewBounds.minRow; row <= viewBounds.maxRow; row++) {
 			for (let col = viewBounds.minCol; col <= viewBounds.maxCol; col++) {
 				const pos = { x: col * spacing.col, y: row * spacing.row };
 				const isUp = (row + col) % 2 === 0;
+
+				// Create triangles and extract vertices
+				createTriangleWithHover(triangles, innerTriangles, pos, isUp, row, col).forEach((v) => {
+					const key = `${v.x.toFixed(2)},${v.y.toFixed(2)}`;
+					if (!uniqueVertices.has(key)) {
+						uniqueVertices.add(key);
+
+						// Convert to hex coordinates and get label
+						const { q, r } = cartesianToHex(v.x, v.y);
+						const vertexLabel = showMusicalLabels
+							? getNoteFromCoords(q, r, currentRootNote)
+							: `(${q},${r})`;
+
+						createVertexWithHover(vertices, innerCircles, v);
+						createVertexLabel(vertexLabels, v, vertexLabel);
+					}
+				});
+
+				// Create triangle labels
 				if (isTriangleVisible(pos, transform)) {
-					createLabel(labels, pos, isUp, `${row},${col}`, isUp ? 'UP' : 'DOWN');
+					const triangleInfo = showMusicalLabels
+						? getTriangleChord(row, col, isUp)
+						: `(${row},${col})`;
+					const subtitle = showMusicalLabels ? (isUp ? 'major' : 'minor') : isUp ? 'UP' : 'DOWN';
+					createLabel(labels, pos, isUp, triangleInfo, subtitle);
 				}
 			}
 		}
-
-		// Inner circles will be created on hover, not here
 	}
 
-	const isVertexVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform) => 
+	const isVertexVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform) =>
 		isVisible(pos, transform, CONFIG.vertex.diameter);
 
 	function getVisibleBounds(transform: d3.ZoomTransform) {
@@ -235,10 +278,8 @@
 		};
 	}
 
-	const isTriangleVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform) => 
+	const isTriangleVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform) =>
 		isVisible(pos, transform, CONFIG.baseTriangleSize);
-
-	// Remove unused createTriangle function - using createTriangleWithHover instead
 
 	function createTriangleWithHover(
 		triangleParent: d3.Selection<SVGGElement, unknown, null, undefined>,
@@ -249,7 +290,8 @@
 		col: number
 	) {
 		const vertices = getTriangleVertices(pos, up);
-		let innerTriangleElement: d3.Selection<SVGPolygonElement, unknown, null, undefined> | null = null;
+		let innerTriangleElement: d3.Selection<SVGPolygonElement, unknown, null, undefined> | null =
+			null;
 
 		triangleParent
 			.append('polygon')
@@ -274,6 +316,7 @@
 		return vertices;
 	}
 
+	// Optimized inner triangle creation
 	function createInnerTriangleElement(
 		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
 		gridPos: { x: number; y: number },
@@ -295,8 +338,6 @@
 			.attr('opacity', CONFIG.innerTriangle.opacity)
 			.style('pointer-events', 'none');
 	}
-
-	// Remove unused createVertex function - using createVertexWithHover instead
 
 	function createVertexWithHover(
 		vertexParent: d3.Selection<SVGGElement, unknown, null, undefined>,
@@ -326,11 +367,12 @@
 			});
 	}
 
-	function createInnerCircleElement(
+	// Optimized inner circle creation
+	const createInnerCircleElement = (
 		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
 		pos: { x: number; y: number }
-	) {
-		return parent
+	) =>
+		parent
 			.append('circle')
 			.attr('cx', pos.x)
 			.attr('cy', pos.y)
@@ -339,14 +381,14 @@
 			.attr('stroke', CONFIG.innerCircle.strokeColor)
 			.attr('stroke-width', CONFIG.innerCircle.strokeWidth)
 			.attr('opacity', CONFIG.innerCircle.opacity)
-			.style('pointer-events', 'none'); // Don't interfere with vertex interactions
-	}
+			.style('pointer-events', 'none');
 
-	function createVertexLabel(
+	// Optimized vertex label creation
+	const createVertexLabel = (
 		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
 		pos: { x: number; y: number },
 		label: string
-	) {
+	) =>
 		parent
 			.append('text')
 			.attr('x', pos.x)
@@ -358,11 +400,6 @@
 			.attr('fill', CONFIG.vertexLabel.color)
 			.style('pointer-events', 'none')
 			.text(label);
-	}
-
-	// Remove unused createInnerTriangle function - using createInnerTriangleElement instead
-
-	// Remove unused createInnerCircle function - using createInnerCircleElement instead
 
 	function createLabel(
 		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
@@ -375,21 +412,22 @@
 		const center = getCentroid(vertices);
 
 		// Create title and subtitle text
-		[{text: title, y: center.y - CONFIG.label.spacing / 2, config: CONFIG.label.title},
-		 {text: subtitle, y: center.y + CONFIG.label.spacing / 2, config: CONFIG.label.subtitle}]
-			.forEach(({text, y, config}) => {
-				parent
-					.append('text')
-					.attr('x', center.x)
-					.attr('y', y)
-					.attr('text-anchor', 'middle')
-					.attr('dominant-baseline', 'middle')
-					.attr('font-size', config.fontSize)
-					.attr('font-family', config.fontFamily)
-					.attr('fill', config.color)
-					.style('pointer-events', 'none')
-					.text(text);
-			});
+		[
+			{ text: title, y: center.y - CONFIG.label.spacing / 2, config: CONFIG.label.title },
+			{ text: subtitle, y: center.y + CONFIG.label.spacing / 2, config: CONFIG.label.subtitle }
+		].forEach(({ text, y, config }) => {
+			parent
+				.append('text')
+				.attr('x', center.x)
+				.attr('y', y)
+				.attr('text-anchor', 'middle')
+				.attr('dominant-baseline', 'middle')
+				.attr('font-size', config.fontSize)
+				.attr('font-family', config.fontFamily)
+				.attr('fill', config.color)
+				.style('pointer-events', 'none')
+				.text(text);
+		});
 	}
 </script>
 
@@ -403,7 +441,7 @@
 			{/each}
 		</select>
 	</label>
-	
+
 	<label>
 		<input type="checkbox" bind:checked={showMusicalLabels} />
 		Show Musical Labels
@@ -454,7 +492,7 @@
 		font-size: 14px;
 	}
 
-	.control-panel input[type="checkbox"] {
+	.control-panel input[type='checkbox'] {
 		transform: scale(1.2);
 	}
 
