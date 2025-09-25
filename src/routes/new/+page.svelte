@@ -49,16 +49,13 @@
 
 	// Cached constants for performance
 	const SQRT3 = Math.sqrt(3);
-	const triangleHeight = (CONFIG.baseTriangleSize * SQRT3) / 2;
-	const spacing = { row: triangleHeight, col: CONFIG.baseTriangleSize / 2 };
-	const gridBounds = {
-		width: CONFIG.gridExtent * spacing.col,
-		height: CONFIG.gridExtent * spacing.row
-	};
-	const half = CONFIG.baseTriangleSize / 2;
-	const scale = CONFIG.innerTriangle.size / CONFIG.baseTriangleSize;
-	const hexSize = CONFIG.baseTriangleSize;
-	const hexYFactor = (hexSize * SQRT3) / 2;
+	const { baseTriangleSize, gridExtent, innerTriangle } = CONFIG;
+	const triangleHeight = (baseTriangleSize * SQRT3) / 2;
+	const spacing = { row: triangleHeight, col: baseTriangleSize / 2 };
+	const gridBounds = { width: gridExtent * spacing.col, height: gridExtent * spacing.row };
+	const half = baseTriangleSize / 2;
+	const scale = innerTriangle.size / baseTriangleSize;
+	const hexYFactor = (baseTriangleSize * SQRT3) / 2;
 
 	// Reactive statement to update grid when root note changes
 	$: if (svg && (currentRootNote || showMusicalLabels !== undefined)) {
@@ -103,7 +100,6 @@
 			.filter((e: any) => e.button === 2 || e.type === 'wheel' || e.type === 'dblclick')
 			.on('zoom', (e: d3.D3ZoomEvent<SVGSVGElement, unknown>) => {
 				gridGroup.attr('transform', e.transform);
-				// Throttle viewport updates to avoid excessive re-rendering
 				clearTimeout(viewportUpdateTimeout);
 				viewportUpdateTimeout = setTimeout(() => updateViewport(e.transform), 100);
 			});
@@ -111,7 +107,7 @@
 	let viewportUpdateTimeout: ReturnType<typeof setTimeout>;
 	let currentTransform: d3.ZoomTransform = d3.zoomIdentity;
 
-	// Utility functions
+	// Optimized utility functions
 	const getTriangleVertices = (pos: { x: number; y: number }, up: boolean) => {
 		const { x, y } = pos;
 		return up
@@ -128,8 +124,8 @@
 	};
 
 	const getCentroid = (vertices: { x: number; y: number }[]) => ({
-		x: (vertices[0].x + vertices[1].x + vertices[2].x) / 3,
-		y: (vertices[0].y + vertices[1].y + vertices[2].y) / 3
+		x: vertices.reduce((sum, v) => sum + v.x, 0) / 3,
+		y: vertices.reduce((sum, v) => sum + v.y, 0) / 3
 	});
 
 	const isVisible = (
@@ -149,63 +145,44 @@
 	};
 
 	// Tonnetz Mathematical Formula Implementation
-	// Based on: Pitch(q, r; root) = (root + 7q + 4r) mod 12
-	const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+	const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] as const;
 	const NOTE_TO_SEMITONE = Object.fromEntries(NOTES.map((note, i) => [note, i]));
 
-	// Optimized modulo and tonnetz functions
-	const mod = (n: number, m: number = 12) => ((n % m) + m) % m;
-	const pitchClass = (q: number, r: number, root: number = 0) => mod(root + 7 * q + 4 * r);
+	// Optimized utility functions
+	const mod = (n: number, m = 12) => ((n % m) + m) % m;
+	const pitchClass = (q: number, r: number, root = 0) => mod(root + 7 * q + 4 * r);
 	const pcToName = (pc: number) => NOTES[mod(pc)];
+	const getNoteFromCoords = (q: number, r: number, rootNote: string) =>
+		pcToName(pitchClass(q, r, NOTE_TO_SEMITONE[rootNote]));
+	const cartesianToHex = (x: number, y: number) => ({
+		r: Math.round(y / hexYFactor),
+		q: Math.round(x / baseTriangleSize - Math.round(y / hexYFactor) / 2)
+	});
 
-	// Get note from tonnetz coordinates
-	function getNoteFromCoords(q: number, r: number, rootNote: string): string {
-		const rootSemitone = NOTE_TO_SEMITONE[rootNote];
-		return pcToName(pitchClass(q, r, rootSemitone));
-	}
-
-	// Convert cartesian to hex coordinates (optimized)
-	function cartesianToHex(x: number, y: number): { q: number; r: number } {
-		const r = Math.round(y / hexYFactor);
-		const q = Math.round(x / hexSize - r / 2);
-		return { q, r };
-	}
-
-	// Get chord information for triangle by analyzing all three notes
+	// Optimized chord detection
 	function getTriangleChord(row: number, col: number, isUp: boolean): string {
 		const pos = { x: col * spacing.col, y: row * spacing.row };
 		const vertices = getTriangleVertices(pos, isUp);
-
-		// Get all three notes
-		const notes = vertices.map((v) => {
+		const pitchClasses = vertices.map((v) => {
 			const { q, r } = cartesianToHex(v.x, v.y);
-			return getNoteFromCoords(q, r, currentRootNote);
+			return NOTE_TO_SEMITONE[getNoteFromCoords(q, r, currentRootNote)];
 		});
 
-		// Get pitch classes (unsorted to preserve order)
-		const pitchClasses = notes.map((note) => NOTE_TO_SEMITONE[note]);
+		// Check each note as potential root
+		for (const [i, root] of pitchClasses.entries()) {
+			const intervals = pitchClasses
+				.filter((_, idx) => idx !== i)
+				.map((note) => mod(note - root))
+				.sort((a, b) => a - b);
 
-		// Try each note as potential root and check if it forms a major or minor triad
-		for (let i = 0; i < 3; i++) {
-			const root = pitchClasses[i];
-			const otherNotes = pitchClasses.filter((_, idx) => idx !== i);
-
-			// Calculate intervals from this potential root
-			const intervals = otherNotes.map((note) => mod(note - root)).sort((a, b) => a - b);
-
-			// Check for major triad: root + major third (4) + perfect fifth (7)
-			if (intervals.length === 2 && intervals[0] === 4 && intervals[1] === 7) {
-				return NOTES[root]; // Major chord
-			}
-
-			// Check for minor triad: root + minor third (3) + perfect fifth (7)
-			if (intervals.length === 2 && intervals[0] === 3 && intervals[1] === 7) {
-				return `${NOTES[root]}`; // Minor chord
+			if (intervals.length === 2) {
+				// if (intervals[0] === 4 && intervals[1] === 7) return NOTES[root];
+				// if (intervals[0] === 3 && intervals[1] === 7) return `${NOTES[root]}m`;
+				return NOTES[root];
 			}
 		}
 
-		// If no standard triad found, return first note with ?
-		return `${notes[0]}?`;
+		return `${NOTES[pitchClasses[0]]}?`;
 	}
 
 	function createGrid() {
@@ -215,9 +192,10 @@
 	function updateViewport(transform: d3.ZoomTransform) {
 		currentTransform = transform;
 		gridGroup.selectAll('*').remove();
-		const [triangles, vertices, innerTriangles, innerCircles, labels, vertexLabels] = Array(6)
-			.fill(0)
-			.map(() => gridGroup.append('g'));
+		const [triangles, vertices, innerTriangles, innerCircles, labels, vertexLabels] = Array.from(
+			{ length: 6 },
+			() => gridGroup.append('g')
+		);
 		const uniqueVertices = new Set<string>();
 
 		// Optimized grid rendering with viewport culling
@@ -256,20 +234,18 @@
 		}
 	}
 
+	// Optimized visibility and bounds functions
 	const isVertexVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform) =>
 		isVisible(pos, transform, CONFIG.vertex.diameter);
 
+	const isTriangleVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform) =>
+		isVisible(pos, transform, baseTriangleSize);
+
 	function getVisibleBounds(transform: d3.ZoomTransform) {
 		const [width, height] = [window.innerWidth, window.innerHeight];
+		const [topLeft, bottomRight] = [transform.invert([0, 0]), transform.invert([width, height])];
+		const buffer = Math.max(baseTriangleSize * 2, 200);
 
-		// Calculate world coordinates of screen bounds
-		const topLeft = transform.invert([0, 0]);
-		const bottomRight = transform.invert([width, height]);
-
-		// Add buffer for smooth scrolling (render slightly outside viewport)
-		const buffer = Math.max(CONFIG.baseTriangleSize * 2, 200);
-
-		// Convert to grid coordinates with buffer
 		return {
 			minRow: Math.floor((topLeft[1] - buffer) / spacing.row) - 1,
 			maxRow: Math.ceil((bottomRight[1] + buffer) / spacing.row) + 1,
@@ -277,9 +253,6 @@
 			maxCol: Math.ceil((bottomRight[0] + buffer) / spacing.col) + 1
 		};
 	}
-
-	const isTriangleVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform) =>
-		isVisible(pos, transform, CONFIG.baseTriangleSize);
 
 	function createTriangleWithHover(
 		triangleParent: d3.Selection<SVGGElement, unknown, null, undefined>,
@@ -367,7 +340,7 @@
 			});
 	}
 
-	// Optimized inner circle creation
+	// Optimized element creation functions
 	const createInnerCircleElement = (
 		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
 		pos: { x: number; y: number }
@@ -383,7 +356,6 @@
 			.attr('opacity', CONFIG.innerCircle.opacity)
 			.style('pointer-events', 'none');
 
-	// Optimized vertex label creation
 	const createVertexLabel = (
 		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
 		pos: { x: number; y: number },
