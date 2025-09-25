@@ -8,7 +8,7 @@
 
 	const CONFIG = {
 		baseTriangleSize: 100,
-		gridExtent: 50,
+		gridExtent: 20,
 		zoomRange: 1.5,
 		triangle: { strokeWidth: 0.3, strokeColor: '#333', opacity: 1 },
 		vertex: { diameter: 30, color: '#1a1a1a', opacity: 1 },
@@ -154,6 +154,136 @@
 				]
 			}
 		},
+		scales: {
+			'Pentatonic Minor': [
+				[0, 0],
+				[1, 0],
+				[2, -1],
+				[2, 0],
+				[3, -1]
+			],
+			'Pentatonic Major': [
+				[0, 0],
+				[0, 1],
+				[1, 0],
+				[2, 0],
+				[3, 0]
+			],
+			'Melodic Minor': [
+				[0, 0],
+				[1, -1],
+				[1, 0],
+				[1, 1],
+				[2, 0],
+				[3, -1],
+				[3, 0]
+			],
+			'Melodic Major': [
+				[0, -1],
+				[0, 0],
+				[0, 1],
+				[1, 0],
+				[2, -1],
+				[2, 0],
+				[3, -1]
+			],
+			'Harmonic Minor': [
+				[0, 0],
+				[0, 1],
+				[1, 0],
+				[1, 1],
+				[1, 2],
+				[2, 1],
+				[3, 0]
+			],
+			'Harmonic Major': [
+				[0, 0],
+				[0, 1],
+				[0, 2],
+				[1, 1],
+				[1, 2],
+				[2, 1],
+				[3, 0]
+			],
+			'Hungarian Minor': [
+				[-1, 0],
+				[-1, 1],
+				[0, 0],
+				[0, 1],
+				[0, 2],
+				[1, 1],
+				[1, 2]
+			],
+			'Hungarian Major': [
+				[0, 0],
+				[0, 1],
+				[1, -1],
+				[1, 0],
+				[2, -1],
+				[2, 1],
+				[3, 0]
+			],
+			'Spanish Heptatonic': [
+				[0, 0],
+				[0, 1],
+				[0, 2],
+				[1, 0],
+				[1, 1],
+				[2, 0],
+				[3, 0],
+				[3, 2]
+			],
+			Flamenco: [
+				[0, 0],
+				[0, 1],
+				[1, -1],
+				[1, 0],
+				[2, -1],
+				[2, 1],
+				[3, 1]
+			],
+			Blues: [
+				[-1, 1],
+				[0, 0],
+				[0, 1],
+				[1, 0],
+				[1, 2],
+				[2, 0]
+			],
+			Enigmatic: [
+				[0, -1],
+				[0, 0],
+				[0, 1],
+				[1, 1],
+				[2, -1],
+				[2, 1],
+				[3, 1]
+			],
+			'Major Scale': [
+				[0, 0],
+				[0, 1],
+				[1, 0],
+				[1, 1],
+				[2, 0],
+				[2, 1],
+				[3, 0]
+			]
+		},
+		modes: {
+			'Ionian (Major)': 0,
+			Dorian: -1,
+			Phrygian: -2,
+			Lydian: 1,
+			Mixolydian: -1,
+			'Aeolian (Minor)': -2,
+			Locrian: -3
+		},
+		// Subtle highlighting colors for scales
+		highlightColors: {
+			primary: '#4a90e2', // Blue
+			secondary: '#7ed321', // Green
+			tertiary: '#f5a623' // Orange
+		},
 		background: '#1a1a1a'
 	};
 
@@ -176,6 +306,14 @@
 	let chordPatternRoot: string | null = null;
 	let highlightedPatternNotes = new Set<string>();
 
+	// Scale highlighting state
+	let selectedScale: string | null = null;
+	let selectedMode: string | null = null;
+	let scaleRoot: string | null = null;
+	let highlightedScaleNotes = new Set<string>();
+
+	// No longer need MODES constant since modes are now direct patterns
+
 	// Cached constants for performance
 	const SQRT3 = Math.sqrt(3);
 	const { baseTriangleSize, gridExtent, innerTriangle } = CONFIG;
@@ -193,13 +331,15 @@
 			singleOctave !== undefined ||
 			qInterval ||
 			rInterval ||
-			selectedNotes)
+			selectedNotes ||
+			selectedScale ||
+			selectedMode)
 	) {
 		updateViewport(currentTransform);
 	}
 
-	// Separate reactive update for single highlights (immediate, no redraw)
-	$: if (svg && gridGroup && (highlightedNote !== null)) {
+	// Separate reactive update for highlights (immediate, no redraw)
+	$: if (svg && gridGroup && (highlightedNote !== null || selectedScale || selectedMode)) {
 		// Update highlights without full grid redraw
 		updateHighlightsOnly();
 	}
@@ -242,6 +382,10 @@
 				if (!isShiftPressed) {
 					highlightedNote = null;
 					selectedNotes.clear();
+				}
+				// Force update to ensure scale/mode highlights persist
+				if (gridGroup && (selectedScale || selectedMode)) {
+					updateHighlightsOnly();
 				}
 			});
 
@@ -430,26 +574,26 @@
 	const highlightChord = (chordType: string) => {
 		// Get the notes that make up this chord
 		const chordNotes = getChordNotes(chordType);
-		
+
 		if (isShiftPressed) {
 			// Toggle selection: if all notes are selected, deselect them; otherwise select all
-			const allSelected = chordNotes.every(note => selectedNotes.has(note));
-			
+			const allSelected = chordNotes.every((note) => selectedNotes.has(note));
+
 			if (allSelected) {
 				// Deselect all chord notes
-				chordNotes.forEach(note => selectedNotes.delete(note));
+				chordNotes.forEach((note) => selectedNotes.delete(note));
 			} else {
 				// Select all chord notes
-				chordNotes.forEach(note => selectedNotes.add(note));
+				chordNotes.forEach((note) => selectedNotes.add(note));
 			}
 			selectedNotes = new Set(selectedNotes); // Trigger reactivity
 		} else {
 			// Normal single selection: clear everything and select chord notes
 			highlightedNote = null;
 			selectedNotes.clear();
-			chordNotes.forEach(note => selectedNotes.add(note));
+			chordNotes.forEach((note) => selectedNotes.add(note));
 			selectedNotes = new Set(selectedNotes); // Trigger reactivity
-			
+
 			// Force immediate highlight update during drag
 			if (isDragging && gridGroup) {
 				updateHighlightsOnly();
@@ -589,6 +733,30 @@
 		return false;
 	};
 
+	// Check if a note is part of scale highlighting
+	const isScaleHighlighted = (name: string): boolean => {
+		return highlightedScaleNotes.has(name);
+	};
+
+	// Check if a triangle should be scale-highlighted (if ALL three vertices are in the scale)
+	const isTriangleScaleHighlighted = (row: number, col: number, isUp: boolean): boolean => {
+		if (highlightedScaleNotes.size === 0) return false;
+
+		const pos = { x: col * spacing.col, y: row * spacing.row };
+		const vertices = getTriangleVertices(pos, isUp);
+
+		// Check if ALL vertices of the triangle are in the highlighted scale
+		for (const vertex of vertices) {
+			const { q, r } = cartesianToHex(vertex.x, vertex.y);
+			const noteName = getPitchWithOctave(q, r, currentRootNote);
+			if (!highlightedScaleNotes.has(noteName)) {
+				return false; // If any vertex is NOT in the scale, don't highlight
+			}
+		}
+
+		return true; // All vertices are in the scale
+	};
+
 	// Get all currently highlighted/selected notes
 	const getAllHighlightedNotes = (): string[] => {
 		const notes = new Set<string>();
@@ -603,12 +771,12 @@
 
 		return Array.from(notes);
 	};
-	
+
 	// Get all chords that are currently highlighted (formed by selected notes)
 	const getHighlightedChords = (): string[] => {
 		const allNotes = getAllHighlightedNotes();
 		const allNotesToCheck = [...allNotes];
-		
+
 		// Add chord pattern notes to the check
 		if (highlightedPatternNotes.size > 0) {
 			for (const patternNote of highlightedPatternNotes) {
@@ -617,9 +785,9 @@
 				}
 			}
 		}
-		
+
 		const highlightedChords: string[] = [];
-		
+
 		// Check if any 3-note combination forms a chord
 		if (allNotesToCheck.length >= 3) {
 			const combinations = getCombinations(allNotesToCheck, 3);
@@ -630,7 +798,7 @@
 				}
 			}
 		}
-		
+
 		return highlightedChords;
 	};
 
@@ -704,15 +872,15 @@
 		}
 		return '(?,?)';
 	};
-	
+
 	// Get coordinate representation for a chord
 	const getChordCoordinates = (chordType: string): string => {
 		const chordNotes = getChordNotes(chordType);
 		if (chordNotes.length === 0) return 'Unknown chord';
-		
+
 		// Find coordinates for each note in the chord
 		const noteCoords: Array<{ note: string; q: number; r: number }> = [];
-		
+
 		for (const noteName of chordNotes) {
 			let found = false;
 			for (let q = -20; q <= 20 && !found; q++) {
@@ -725,7 +893,7 @@
 				}
 			}
 		}
-		
+
 		// Find root note: use (0,0) if it exists, otherwise use the first note
 		let rootCoords: { q: number; r: number } | null = null;
 		const zeroZero = noteCoords.find((nc) => nc.q === 0 && nc.r === 0);
@@ -734,18 +902,18 @@
 		} else if (noteCoords.length > 0) {
 			rootCoords = { q: noteCoords[0].q, r: noteCoords[0].r };
 		}
-		
+
 		if (!rootCoords) return 'Unknown coordinates';
-		
+
 		// Calculate relative coordinates from root
 		const coordinates: Array<[number, number]> = [];
 		for (const { q, r } of noteCoords) {
 			coordinates.push([q - rootCoords.q, r - rootCoords.r]);
 		}
-		
+
 		// Sort coordinates for consistent display
 		coordinates.sort((a, b) => (a[0] === b[0] ? a[1] - b[1] : a[0] - b[0]));
-		
+
 		return JSON.stringify(coordinates);
 	};
 
@@ -792,7 +960,103 @@
 	const clearChordPattern = () => {
 		selectedChordPattern = null;
 		chordPatternRoot = null;
-		highlightedPatternNotes = new Set();
+		highlightedPatternNotes.clear();
+		if (gridGroup) updateHighlightsOnly();
+	};
+
+	// Scale highlighting functions
+	const applyScale = (scaleName: string, rootNote: string) => {
+		const pattern = CONFIG.scales[scaleName as keyof typeof CONFIG.scales];
+		if (!pattern || pattern.length === 0) return;
+
+		selectedScale = scaleName;
+		selectedMode = null; // Clear mode when selecting scale
+		scaleRoot = rootNote;
+
+		// Find root note coordinates
+		let rootCoords: { q: number; r: number } | null = null;
+		for (let q = -20; q <= 20; q++) {
+			for (let r = -20; r <= 20; r++) {
+				const foundNote = getPitchWithOctave(q, r, currentRootNote);
+				if (foundNote === rootNote) {
+					rootCoords = { q, r };
+					break;
+				}
+			}
+			if (rootCoords) break;
+		}
+
+		if (!rootCoords) return;
+
+		// Calculate scale notes
+		const scaleNotes = new Set<string>();
+		for (const [qOffset, rOffset] of pattern) {
+			const noteQ = rootCoords.q + qOffset;
+			const noteR = rootCoords.r + rOffset;
+			const noteName = getPitchWithOctave(noteQ, noteR, currentRootNote);
+			scaleNotes.add(noteName);
+		}
+
+		highlightedScaleNotes = scaleNotes;
+
+		// Force update
+		if (gridGroup) updateHighlightsOnly();
+	};
+
+	// Apply mode by shifting the major scale pattern
+	const applyMode = (modeName: string, rootNote: string) => {
+		const modeOffset = CONFIG.modes[modeName as keyof typeof CONFIG.modes];
+		if (modeOffset === undefined) return;
+
+		// Get major scale pattern and shift it
+		const majorPattern = CONFIG.scales['Major Scale'];
+		if (!majorPattern) return;
+
+		// Shift the pattern coordinates by the mode offset
+		const shiftedPattern = majorPattern.map(([q, r]) => [
+			q + modeOffset, // Shift horizontally by mode offset
+			r
+		]);
+
+		selectedMode = modeName;
+		selectedScale = null; // Clear scale when selecting mode
+		scaleRoot = rootNote;
+
+		// Find root note coordinates
+		let rootCoords: { q: number; r: number } | null = null;
+		for (let q = -20; q <= 20; q++) {
+			for (let r = -20; r <= 20; r++) {
+				const foundNote = getPitchWithOctave(q, r, currentRootNote);
+				if (foundNote === rootNote) {
+					rootCoords = { q, r };
+					break;
+				}
+			}
+			if (rootCoords) break;
+		}
+
+		if (!rootCoords) return;
+
+		// Calculate scale notes using shifted pattern
+		const scaleNotes = new Set<string>();
+		for (const [qOffset, rOffset] of shiftedPattern) {
+			const noteQ = rootCoords.q + qOffset;
+			const noteR = rootCoords.r + rOffset;
+			const noteName = getPitchWithOctave(noteQ, noteR, currentRootNote);
+			scaleNotes.add(noteName);
+		}
+
+		highlightedScaleNotes = scaleNotes;
+
+		// Force update
+		if (gridGroup) updateHighlightsOnly();
+	};
+
+	const clearScale = () => {
+		selectedScale = null;
+		selectedMode = null;
+		scaleRoot = null;
+		highlightedScaleNotes.clear();
 		if (gridGroup) updateHighlightsOnly();
 	};
 
@@ -811,6 +1075,36 @@
 				const element = d3.select(nodes[i]);
 				const triangleType = element.attr('data-triangle-type');
 				return triangleType && isChordHighlighted(triangleType);
+			})
+			.classed('scale-highlight', (d: any, i: number, nodes: any[]) => {
+				const element = d3.select(nodes[i]);
+				const triangleType = element.attr('data-triangle-type');
+				if (!triangleType) return false;
+
+				// Parse triangle type to get row, col, isUp
+				const [, orientation] = triangleType.split('-');
+				if (!orientation) return false;
+
+				// We need to find the triangle's position - this is a bit tricky from the DOM
+				// Let's use a different approach: check if any vertex notes are highlighted
+				const points = element.attr('points');
+				if (!points) return false;
+
+				const coords = points.split(' ').map((point: string) => {
+					const [x, y] = point.split(',').map(Number);
+					return { x, y };
+				});
+
+				// Check if ALL vertices are in the scale
+				for (const coord of coords) {
+					const { q, r } = cartesianToHex(coord.x, coord.y);
+					const noteName = getPitchWithOctave(q, r, currentRootNote);
+					if (!highlightedScaleNotes.has(noteName)) {
+						return false; // If any vertex is NOT in the scale, don't highlight
+					}
+				}
+
+				return true; // All vertices are in the scale
 			});
 
 		// Update vertex highlights
@@ -820,6 +1114,11 @@
 				const element = d3.select(nodes[i]);
 				const noteName = element.attr('data-note');
 				return noteName && isNoteHighlighted(noteName);
+			})
+			.classed('scale-highlight', (d: any, i: number, nodes: any[]) => {
+				const element = d3.select(nodes[i]);
+				const noteName = element.attr('data-note');
+				return noteName && isScaleHighlighted(noteName);
 			});
 	}
 
@@ -929,6 +1228,9 @@
 				const triangleType = getTriangleType(row, col, up);
 				return isChordHighlighted(triangleType);
 			})
+			.classed('scale-highlight', () => {
+				return isTriangleScaleHighlighted(row, col, up);
+			})
 			.on('mouseleave', () => {
 				if (innerTriangleElement) {
 					innerTriangleElement.remove();
@@ -1003,6 +1305,11 @@
 				const { q, r } = cartesianToHex(pos.x, pos.y);
 				const noteName = getPitchWithOctave(q, r, currentRootNote);
 				return isNoteHighlighted(noteName);
+			})
+			.classed('scale-highlight', () => {
+				const { q, r } = cartesianToHex(pos.x, pos.y);
+				const noteName = getPitchWithOctave(q, r, currentRootNote);
+				return isScaleHighlighted(noteName);
 			})
 			.on('mouseleave', () => {
 				if (innerCircleElement) {
@@ -1105,14 +1412,18 @@
 <!-- Control Panel -->
 <div class="control-panel">
 	<div
-		class="highlight-info"
+		class="highlight-info sticky"
 		class:inactive={!highlightedNote &&
 			selectedNotes.size === 0 &&
 			highlightedPatternNotes.size === 0}
 	>
 		{#if getHighlightedChords().length > 0}
 			<span
-				>Playing: {showMusicalLabels ? getHighlightedChords().map(c => `${c.split('-')[0]} ${c.includes('-up') ? '(minor)' : '(major)'}`).join(', ') : getCoordinatePattern()}</span
+				>Playing: {showMusicalLabels
+					? getHighlightedChords()
+							.map((c) => `${c.split('-')[0]} ${c.includes('-up') ? '(minor)' : '(major)'}`)
+							.join(', ')
+					: getCoordinatePattern()}</span
 			>
 		{:else if highlightedNote}
 			<span
@@ -1214,6 +1525,62 @@
 			</div>
 		{/if}
 	</div>
+
+	<div class="control-row scale-patterns">
+		<span>Scale Patterns:</span>
+		<div class="pattern-grid">
+			{#each Object.keys(CONFIG.scales) as scaleName}
+				<button
+					class="pattern-btn scale-btn"
+					class:active={selectedScale === scaleName}
+					on:click={() => {
+						if (selectedScale === scaleName) {
+							clearScale();
+						} else {
+							// Use current root note or default to C
+							const rootNote = highlightedNote || (singleOctave ? 'C' : 'C4');
+							applyScale(scaleName, rootNote);
+						}
+					}}
+				>
+					{scaleName}
+				</button>
+			{/each}
+		</div>
+		{#if selectedScale && scaleRoot}
+			<div class="pattern-info">
+				<small>{selectedScale} scale on {scaleRoot}</small>
+			</div>
+		{/if}
+	</div>
+
+	<div class="control-row mode-patterns">
+		<span>Mode Patterns:</span>
+		<div class="pattern-grid">
+			{#each Object.keys(CONFIG.modes) as modeName}
+				<button
+					class="pattern-btn mode-btn"
+					class:active={selectedMode === modeName}
+					on:click={() => {
+						if (selectedMode === modeName) {
+							clearScale();
+						} else {
+							// Use current root note or default to C
+							const rootNote = highlightedNote || (singleOctave ? 'C' : 'C4');
+							applyMode(modeName, rootNote);
+						}
+					}}
+				>
+					{modeName}
+				</button>
+			{/each}
+		</div>
+		{#if selectedMode && scaleRoot}
+			<div class="pattern-info">
+				<small>{selectedMode} mode on {scaleRoot}</small>
+			</div>
+		{/if}
+	</div>
 </div>
 
 <div bind:this={container} class="tonnetz-container">
@@ -1226,6 +1593,12 @@
 		padding: 0;
 		overflow: hidden;
 		background: var(--bg-color);
+	}
+
+	.sticky {
+		position: sticky;
+		top: 0;
+		z-index: 1000;
 	}
 
 	.control-panel {
@@ -1245,13 +1618,15 @@
 		gap: 8px;
 		min-width: 100px;
 		box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+		max-height: 90vh;
+		overflow-y: auto;
 	}
 
 	.highlight-info {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: rgba(255, 107, 53, 0.1);
+		background: rgb(84, 35, 17);
 		border: 1px solid #ff6b35;
 		border-radius: 4px;
 		padding: 6px 8px;
@@ -1262,7 +1637,7 @@
 	}
 
 	.highlight-info.inactive {
-		background: rgba(128, 128, 128, 0.1);
+		background: rgb(31, 31, 31);
 		border: 1px solid #666;
 		color: #888;
 		font-weight: normal;
@@ -1353,11 +1728,64 @@
 		line-height: 1.2;
 	}
 
+	.scale-patterns,
+	.mode-patterns {
+		flex-direction: column;
+		gap: 8px;
+		padding-top: 8px;
+		border-top: 1px solid #444;
+	}
+
+	.scale-btn {
+		background: #2a4a2a;
+		border-color: #4a7c59;
+	}
+
+	.scale-btn:hover {
+		background: #3a5a3a;
+		border-color: #5a8c69;
+	}
+
+	.scale-btn.active {
+		background: #4a90e2;
+		border-color: #4a90e2;
+		color: white;
+	}
+
+	.mode-btn {
+		background: #4a3a2a;
+		border-color: #7c5a4a;
+	}
+
+	.mode-btn:hover {
+		background: #5a4a3a;
+		border-color: #8c6a5a;
+	}
+
+	.mode-btn.active {
+		background: #f5a623;
+		border-color: #f5a623;
+		color: white;
+	}
+
 	.control-panel select:focus,
 	.control-panel input:focus {
 		outline: none;
 		border-color: #666;
-		box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.1);
+	}
+
+	/* Scale highlighting styles */
+	:global(.scale-highlight) {
+		fill: rgba(74, 144, 226, 0.2) !important; /* Blue with 20% opacity */
+		stroke: rgba(74, 144, 226, 0.6) !important;
+		stroke-width: 1 !important;
+	}
+
+	/* Scale highlighting for triangles */
+	:global(polygon.scale-highlight) {
+		fill: rgba(74, 144, 226, 0.1) !important; /* More subtle for triangles */
+		stroke: rgba(74, 144, 226, 0.3) !important;
+		stroke-width: 0.5 !important;
 	}
 
 	.tonnetz-container {
