@@ -7,164 +7,88 @@
 	let svg: d3.Selection<SVGSVGElement, unknown, null, undefined>;
 	let gridGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
 
+	// Consolidated configuration
 	const CONFIG = {
+		// Core geometry
 		baseTriangleSize: 100,
 		gridExtent: 20,
 		zoomRange: 1.5,
+		
+		// Visual styling
 		triangle: { strokeWidth: 0.3, strokeColor: '#333', opacity: 1 },
 		vertex: { diameter: 30, color: '#1a1a1a', opacity: 1 },
-		innerTriangle: {
-			size: 80,
-			strokeWidth: 0.2,
-			strokeColor: '#111',
-			fillColor: '#1f1f1f',
-			opacity: 0.8
-		},
-		innerCircle: {
-			diameter: 25,
-			strokeWidth: 0.2,
-			strokeColor: '#111',
-			fillColor: '#1f1f1f',
-			opacity: 0.9
-		},
+		innerTriangle: { size: 80, strokeWidth: 0.2, strokeColor: '#111', fillColor: '#1f1f1f', opacity: 0.8 },
+		innerCircle: { diameter: 25, strokeWidth: 0.2, strokeColor: '#111', fillColor: '#1f1f1f', opacity: 0.9 },
+		
+		// Typography
 		label: {
 			title: { fontSize: 8, color: '#666', fontFamily: 'Arial, sans-serif' },
 			subtitle: { fontSize: 6, color: '#555', fontFamily: 'Arial, sans-serif' },
-			spacing: 10 // Vertical spacing between title and subtitle
+			spacing: 10
 		},
-		vertexLabel: {
-			fontSize: 6,
-			color: '#555',
-			fontFamily: 'Arial, sans-serif'
-		},
-		music: {
-			rootNote: 'C', // Configurable root note
-			showMusicalLabels: true, // Toggle between musical and coordinate labels
-			singleOctave: true, // Toggle between single octave (C, D, E...) and multi-octave (C2, D3, E4...)
-			octaveRange: { min: 0, max: 8 } // Range of octaves to display when singleOctave is false
-		},
+		vertexLabel: { fontSize: 6, color: '#555', fontFamily: 'Arial, sans-serif' },
+		
+		// Music theory
+		music: { rootNote: 'C', showMusicalLabels: true, singleOctave: true, octaveRange: { min: 0, max: 8 } },
 		tonnetz: {
-			// Configurable tonnetz formula: pitchClass = root + qInterval * q + rInterval * r
-			qInterval: 7, // Perfect fifth (7 semitones) - horizontal movement
-			rInterval: 4, // Major third (4 semitones) - diagonal movement
-			name: 'Neo-Riemannian', // Display name for current configuration
+			qInterval: 7, rInterval: 4, name: 'Neo-Riemannian',
 			presets: {
-				'Neo-Riemannian': { qInterval: 7, rInterval: 4 }, // Classic 3,4,5 tonnetz
-				Chromatic: { qInterval: 1, rInterval: 1 }, // Chromatic lattice
-				'Whole Tone': { qInterval: 2, rInterval: 2 }, // Whole tone lattice
-				Quartal: { qInterval: 5, rInterval: 5 }, // Fourth-based lattice
-				Augmented: { qInterval: 4, rInterval: 8 }, // Augmented triad lattice
-				'Shepard Tone': { qInterval: 12, rInterval: 7 } // Octave + fifth lattice
+				'Neo-Riemannian': { qInterval: 7, rInterval: 4 },
+				Chromatic: { qInterval: 1, rInterval: 1 },
+				'Whole Tone': { qInterval: 2, rInterval: 2 },
+				Quartal: { qInterval: 5, rInterval: 5 },
+				Augmented: { qInterval: 4, rInterval: 8 },
+				'Shepard Tone': { qInterval: 12, rInterval: 7 }
 			}
 		},
-		highlight: {
-			// Highlight colors and styling
-			color: '#ff6b35', // Orange highlight color
-			strokeWidth: 2, // Highlighted stroke width
-			fillOpacity: 0.1, // Fill opacity for highlighted triangles
-			// Animation settings
-			transitionDuration: 0.1, // CSS transition duration in seconds
-			easing: 'ease' // CSS transition easing
-		},
-		chordPatterns: {
-			// Chord pattern recipes as coordinate offsets from root (0,0)
-			presets
-		},
+		
+		// Highlighting
+		highlight: { color: '#ff6b35', strokeWidth: 2, fillOpacity: 0.1, transitionDuration: 0.1, easing: 'ease' },
+		highlightColors: { primary: '#4a90e2', secondary: '#7ed321', tertiary: '#f5a623' },
+		
+		// Patterns and scales
+		chordPatterns: { presets },
 		scales,
-		modes: {
-			'Ionian (Major)': 0,
-			Dorian: -1,
-			Phrygian: -2,
-			Lydian: 1,
-			Mixolydian: -1,
-			'Aeolian (Minor)': -2,
-			Locrian: -3
-		},
-		// Subtle highlighting colors for scales
-		highlightColors: {
-			primary: '#4a90e2', // Blue
-			secondary: '#7ed321', // Green
-			tertiary: '#f5a623' // Orange
-		},
+		modes: { 'Ionian (Major)': 0, Dorian: -1, Phrygian: -2, Lydian: 1, Mixolydian: -1, 'Aeolian (Minor)': -2, Locrian: -3 },
+		
 		background: '#1a1a1a'
 	};
 
-	// Reactive variables
-	let currentRootNote = CONFIG.music.rootNote;
-	let showMusicalLabels = true;
-	let singleOctave = CONFIG.music.singleOctave;
-	let currentTonnetzName = CONFIG.tonnetz.name;
-	let qInterval = CONFIG.tonnetz.qInterval;
-	let rInterval = CONFIG.tonnetz.rInterval;
-
-	// Highlight state - notes are the single source of truth
-	let highlightedNote: string | null = null;
-	let isDragging = false;
-	let isShiftPressed = false;
-	let selectedNotes = new Set<string>();
-
-	// Chord pattern state
-	let selectedChordPattern: string | null = null;
-	let chordPatternRoot: string | null = null;
-	let highlightedPatternNotes = new Set<string>();
-
-	// Scale highlighting state
-	let selectedScale: string | null = null;
-	let selectedMode: string | null = null;
-	let scaleRoot: string | null = null;
-	let highlightedScaleNotes = new Set<string>();
-
-	// No longer need MODES constant since modes are now direct patterns
-
-	// Cached constants for performance
+	// Constants
 	const SQRT3 = Math.sqrt(3);
 	const { baseTriangleSize, gridExtent, innerTriangle } = CONFIG;
 	const HALF_SIZE = baseTriangleSize * 0.5;
 	const TRI_HEIGHT = baseTriangleSize * SQRT3 * 0.5;
 	const spacing = { row: TRI_HEIGHT, col: HALF_SIZE };
 	const scale = innerTriangle.size / baseTriangleSize;
+	const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] as const;
+	const NOTE_TO_SEMITONE: Record<string, number> = Object.fromEntries(NOTES.map((note, i) => [note, i]));
+	const INTERVAL_NAMES = ['Unison', 'Minor 2nd', 'Major 2nd', 'Minor 3rd', 'Major 3rd', 'Perfect 4th', 'Tritone', 'Perfect 5th', 'Minor 6th', 'Major 6th', 'Minor 7th', 'Major 7th'];
 
-	// Performance optimization caches
-	let coordinateCache = new Map<string, { q: number; r: number }>();
-	let coordinatePatternCache = new Map<string, string>();
-	let highlightedChordsCache = new Set<string>();
-	let lastSelectedNotesHash = '';
-	let debouncedChordTimeout: ReturnType<typeof setTimeout> | null = null;
-	let throttledDragTimeout: ReturnType<typeof setTimeout> | null = null;
+	// State variables
+	let currentRootNote = CONFIG.music.rootNote, showMusicalLabels = true, singleOctave = CONFIG.music.singleOctave;
+	let currentTonnetzName = CONFIG.tonnetz.name, qInterval = CONFIG.tonnetz.qInterval, rInterval = CONFIG.tonnetz.rInterval;
+	let highlightedNote: string | null = null, isDragging = false, isShiftPressed = false;
+	let selectedNotes = new Set<string>(), selectedChordPattern: string | null = null, chordPatternRoot: string | null = null;
+	let highlightedPatternNotes = new Set<string>(), selectedScale: string | null = null, selectedMode: string | null = null;
+	let scaleRoot: string | null = null, highlightedScaleNotes = new Set<string>();
 
-	// Reactive grid updates (but not during dragging to prevent flicker) - optimized with guards
-	$: if (
-		svg &&
-		!isDragging &&
-		(currentRootNote ||
-			showMusicalLabels !== undefined ||
-			singleOctave !== undefined ||
-			qInterval ||
-			rInterval)
-	) {
-		// Only update viewport for configuration changes, not selection changes
+	// Performance caches
+	let coordinateCache = new Map<string, { q: number; r: number }>(), coordinatePatternCache = new Map<string, string>();
+	let highlightedChordsCache = new Set<string>(), lastSelectedNotesHash = '';
+	let debouncedChordTimeout: ReturnType<typeof setTimeout> | null = null, throttledDragTimeout: ReturnType<typeof setTimeout> | null = null;
+
+	// Reactive updates
+	$: if (svg && !isDragging && (currentRootNote || showMusicalLabels !== undefined || singleOctave !== undefined || qInterval || rInterval)) {
 		updateViewport(currentTransform);
 	}
-
-	// Unified reactive update for all highlighting (optimized with debouncing)
 	$: if (svg && gridGroup && (highlightedNote !== null || selectedNotes.size > 0 || selectedScale || selectedMode || highlightedPatternNotes.size > 0)) {
-		// Debounce highlight updates to prevent excessive DOM manipulation
 		requestAnimationFrame(() => updateHighlightsOnly());
 	}
-
-	// Clear caches when root note changes
-	$: if (currentRootNote) {
-		clearCaches();
-	}
-
-	// Update CSS custom properties
+	$: if (currentRootNote) clearCaches();
 	$: if (container) {
 		const { color, strokeWidth, fillOpacity, transitionDuration, easing } = CONFIG.highlight;
-		const hex = color.slice(1);
-		const r = parseInt(hex.slice(0, 2), 16);
-		const g = parseInt(hex.slice(2, 4), 16);
-		const b = parseInt(hex.slice(4, 6), 16);
-
+		const [r, g, b] = [color.slice(1, 3), color.slice(3, 5), color.slice(5, 7)].map(x => parseInt(x, 16));
 		Object.assign(container.style, {
 			'--highlight-color-value': color,
 			'--highlight-stroke-width-value': strokeWidth.toString(),
@@ -297,35 +221,12 @@
 		);
 	};
 
-	// Music theory constants - optimized lookups
-	const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] as const;
-	const NOTE_TO_SEMITONE: Record<string, number> = {
-		C: 0,
-		'C#': 1,
-		D: 2,
-		'D#': 3,
-		E: 4,
-		F: 5,
-		'F#': 6,
-		G: 7,
-		'G#': 8,
-		A: 9,
-		'A#': 10,
-		B: 11
-	};
-
-	// Fast math functions
+	// Math and coordinate functions
 	const mod12 = (n: number) => ((n % 12) + 12) % 12;
 	const pitchClass = (q: number, r: number, root = 0) => root + qInterval * q + rInterval * r;
 	const getPitchWithOctave = (q: number, r: number, rootNote: string) => {
 		const fullPitch = pitchClass(q, r, NOTE_TO_SEMITONE[rootNote]);
-		if (singleOctave) {
-			return NOTES[mod12(fullPitch)];
-		} else {
-			const octave = Math.floor(fullPitch / 12) + 4; // Center around octave 4
-			const noteClass = mod12(fullPitch);
-			return `${NOTES[noteClass]}${octave}`;
-		}
+		return singleOctave ? NOTES[mod12(fullPitch)] : `${NOTES[mod12(fullPitch)]}${Math.floor(fullPitch / 12) + 4}`;
 	};
 	const cartesianToHex = (x: number, y: number) => {
 		const r = Math.round(y / TRI_HEIGHT);
@@ -464,20 +365,6 @@
 		}
 	};
 
-	const INTERVAL_NAMES = [
-		'Unison',
-		'Minor 2nd',
-		'Major 2nd',
-		'Minor 3rd',
-		'Major 3rd',
-		'Perfect 4th',
-		'Tritone',
-		'Perfect 5th',
-		'Minor 6th',
-		'Major 6th',
-		'Minor 7th',
-		'Major 7th'
-	];
 	const getIntervalDescription = (semitones: number) =>
 		INTERVAL_NAMES[semitones] || `${semitones} semitones`;
 
@@ -514,22 +401,13 @@
 
 	const highlightNote = (name: string) => {
 		if (isShiftPressed) {
-			// Toggle selection when shift is held
-			if (selectedNotes.has(name)) {
-				selectedNotes.delete(name);
-			} else {
-				selectedNotes.add(name);
-			}
-			selectedNotes = new Set(selectedNotes); // Trigger reactivity
-			// Clear single note highlight when using multi-select
+			selectedNotes.has(name) ? selectedNotes.delete(name) : selectedNotes.add(name);
+			selectedNotes = new Set(selectedNotes);
 			highlightedNote = null;
 		} else {
-			// Normal single selection
 			highlightedNote = name;
 			selectedNotes.clear();
 		}
-
-		// Trigger debounced chord calculation and highlight update
 		debouncedChordCalculation();
 	};
 
@@ -607,59 +485,25 @@
 	};
 
 	const isChordHighlighted = (name: string) => {
-		// Use cached chord detection for O(1) lookup
-		if (highlightedChordsCache.has(name)) {
-			return true;
-		}
-
-		// Trigger debounced calculation if cache is empty and we have notes
+		if (highlightedChordsCache.has(name)) return true;
 		const allNotes = getAllHighlightedNotes();
-		if (allNotes.length >= 3 && highlightedChordsCache.size === 0) {
-			debouncedChordCalculation();
-		}
-
+		if (allNotes.length >= 3 && highlightedChordsCache.size === 0) debouncedChordCalculation();
 		return false;
 	};
 
-	const isNoteHighlighted = (name: string) => {
-		// Direct note highlighting
-		if (highlightedNote === name || selectedNotes.has(name)) {
-			return true;
-		}
+	const isNoteHighlighted = (name: string) => 
+		highlightedNote === name || selectedNotes.has(name) || highlightedPatternNotes.has(name);
 
-		// Check if this note is part of chord pattern highlighting
-		if (highlightedPatternNotes.has(name)) {
-			return true;
-		}
+	const isScaleHighlighted = (name: string) => highlightedScaleNotes.has(name);
 
-		// Note: With simplified system, chord highlighting is automatic based on selected notes
-		// No need to check for chord-specific highlighting since notes are the source of truth
-
-		return false;
-	};
-
-	// Check if a note is part of scale highlighting
-	const isScaleHighlighted = (name: string): boolean => {
-		return highlightedScaleNotes.has(name);
-	};
-
-	// Check if a triangle should be scale-highlighted (if ALL three vertices are in the scale)
-	const isTriangleScaleHighlighted = (row: number, col: number, isUp: boolean): boolean => {
+	const isTriangleScaleHighlighted = (row: number, col: number, isUp: boolean) => {
 		if (highlightedScaleNotes.size === 0) return false;
-
 		const pos = { x: col * spacing.col, y: row * spacing.row };
 		const vertices = getTriangleVertices(pos, isUp);
-
-		// Check if ALL vertices of the triangle are in the highlighted scale
-		for (const vertex of vertices) {
-			const { q, r } = cartesianToHex(vertex.x, vertex.y);
-			const noteName = getPitchWithOctave(q, r, currentRootNote);
-			if (!highlightedScaleNotes.has(noteName)) {
-				return false; // If any vertex is NOT in the scale, don't highlight
-			}
-		}
-
-		return true; // All vertices are in the scale
+		return vertices.every(v => {
+			const { q, r } = cartesianToHex(v.x, v.y);
+			return highlightedScaleNotes.has(getPitchWithOctave(q, r, currentRootNote));
+		});
 	};
 
 	// Get all currently highlighted/selected notes
@@ -799,30 +643,48 @@
 		return JSON.stringify(coordinates);
 	};
 
-	// Chord pattern functions - optimized with caching
-	const applyChordPattern = (patternName: string, rootNote: string) => {
-		const pattern =
-			CONFIG.chordPatterns.presets[patternName as keyof typeof CONFIG.chordPatterns.presets];
-		if (!pattern) return;
+	// Generic pattern applier
+	const applyPattern = (pattern: [number, number][], rootNote: string) => {
+		const rootCoords = getNoteCoordsFromCache(rootNote);
+		if (!rootCoords) return new Set<string>();
+		
+		const notes = new Set<string>();
+		for (const [qOffset, rOffset] of pattern) {
+			const noteName = getPitchWithOctave(rootCoords.q + qOffset, rootCoords.r + rOffset, currentRootNote);
+			notes.add(noteName);
+		}
+		return notes;
+	};
 
+	const applyChordPattern = (patternName: string, rootNote: string) => {
+		const pattern = CONFIG.chordPatterns.presets[patternName as keyof typeof CONFIG.chordPatterns.presets] as [number, number][];
+		if (!pattern) return;
 		selectedChordPattern = patternName;
 		chordPatternRoot = rootNote;
+		highlightedPatternNotes = applyPattern(pattern, rootNote);
+		if (gridGroup) throttledDragUpdate();
+	};
 
-		// Find root note coordinates using cache
-		const rootCoords = getNoteCoordsFromCache(rootNote);
-		if (!rootCoords) return;
+	const applyScale = (scaleName: string, rootNote: string) => {
+		const pattern = CONFIG.scales[scaleName as keyof typeof CONFIG.scales] as [number, number][];
+		if (!pattern?.length) return;
+		selectedScale = scaleName;
+		selectedMode = null;
+		scaleRoot = rootNote;
+		highlightedScaleNotes = applyPattern(pattern, rootNote);
+		if (gridGroup) throttledDragUpdate();
+	};
 
-		// Calculate pattern notes
-		const patternNotes = new Set<string>();
-		for (const [qOffset, rOffset] of pattern) {
-			const noteQ = rootCoords.q + qOffset;
-			const noteR = rootCoords.r + rOffset;
-			const noteName = getPitchWithOctave(noteQ, noteR, currentRootNote);
-			patternNotes.add(noteName);
-		}
-
-		highlightedPatternNotes = patternNotes;
-		// Force update with throttling
+	const applyMode = (modeName: string, rootNote: string) => {
+		const modeOffset = CONFIG.modes[modeName as keyof typeof CONFIG.modes];
+		const majorPattern = CONFIG.scales['Major Scale'];
+		if (modeOffset === undefined || !majorPattern) return;
+		
+		const shiftedPattern = majorPattern.map(([q, r]) => [q + modeOffset, r] as [number, number]);
+		selectedMode = modeName;
+		selectedScale = null;
+		scaleRoot = rootNote;
+		highlightedScaleNotes = applyPattern(shiftedPattern, rootNote);
 		if (gridGroup) throttledDragUpdate();
 	};
 
@@ -831,72 +693,6 @@
 		chordPatternRoot = null;
 		highlightedPatternNotes.clear();
 		if (gridGroup) updateHighlightsOnly();
-	};
-
-	// Scale highlighting functions - optimized with caching
-	const applyScale = (scaleName: string, rootNote: string) => {
-		const pattern = CONFIG.scales[scaleName as keyof typeof CONFIG.scales];
-		if (!pattern || pattern.length === 0) return;
-
-		selectedScale = scaleName;
-		selectedMode = null; // Clear mode when selecting scale
-		scaleRoot = rootNote;
-
-		// Find root note coordinates using cache
-		const rootCoords = getNoteCoordsFromCache(rootNote);
-		if (!rootCoords) return;
-
-		// Calculate scale notes
-		const scaleNotes = new Set<string>();
-		for (const [qOffset, rOffset] of pattern) {
-			const noteQ = rootCoords.q + qOffset;
-			const noteR = rootCoords.r + rOffset;
-			const noteName = getPitchWithOctave(noteQ, noteR, currentRootNote);
-			scaleNotes.add(noteName);
-		}
-
-		highlightedScaleNotes = scaleNotes;
-
-		// Force update with throttling
-		if (gridGroup) throttledDragUpdate();
-	};
-
-	// Apply mode by shifting the major scale pattern - optimized with caching
-	const applyMode = (modeName: string, rootNote: string) => {
-		const modeOffset = CONFIG.modes[modeName as keyof typeof CONFIG.modes];
-		if (modeOffset === undefined) return;
-
-		// Get major scale pattern and shift it
-		const majorPattern = CONFIG.scales['Major Scale'];
-		if (!majorPattern) return;
-
-		// Shift the pattern coordinates by the mode offset
-		const shiftedPattern = majorPattern.map(([q, r]) => [
-			q + modeOffset, // Shift horizontally by mode offset
-			r
-		]);
-
-		selectedMode = modeName;
-		selectedScale = null; // Clear scale when selecting mode
-		scaleRoot = rootNote;
-
-		// Find root note coordinates using cache
-		const rootCoords = getNoteCoordsFromCache(rootNote);
-		if (!rootCoords) return;
-
-		// Calculate scale notes using shifted pattern
-		const scaleNotes = new Set<string>();
-		for (const [qOffset, rOffset] of shiftedPattern) {
-			const noteQ = rootCoords.q + qOffset;
-			const noteR = rootCoords.r + rOffset;
-			const noteName = getPitchWithOctave(noteQ, noteR, currentRootNote);
-			scaleNotes.add(noteName);
-		}
-
-		highlightedScaleNotes = scaleNotes;
-
-		// Force update with throttling
-		if (gridGroup) throttledDragUpdate();
 	};
 
 	const clearScale = () => {
@@ -1195,66 +991,29 @@
 	}
 
 	// Element creation functions
-	const createInnerCircleElement = (
-		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
-		pos: { x: number; y: number }
-	) =>
-		parent
-			.append('circle')
-			.attr('cx', pos.x)
-			.attr('cy', pos.y)
-			.attr('r', CONFIG.innerCircle.diameter / 2)
-			.attr('fill', CONFIG.innerCircle.fillColor)
-			.attr('stroke', CONFIG.innerCircle.strokeColor)
-			.attr('stroke-width', CONFIG.innerCircle.strokeWidth)
-			.attr('opacity', CONFIG.innerCircle.opacity)
+	const createInnerCircleElement = (parent: d3.Selection<SVGGElement, unknown, null, undefined>, pos: { x: number; y: number }) =>
+		parent.append('circle').attr('cx', pos.x).attr('cy', pos.y).attr('r', CONFIG.innerCircle.diameter / 2)
+			.attr('fill', CONFIG.innerCircle.fillColor).attr('stroke', CONFIG.innerCircle.strokeColor)
+			.attr('stroke-width', CONFIG.innerCircle.strokeWidth).attr('opacity', CONFIG.innerCircle.opacity)
 			.style('pointer-events', 'none');
 
-	const createVertexLabel = (
-		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
-		pos: { x: number; y: number },
-		label: string
-	) =>
-		parent
-			.append('text')
-			.attr('x', pos.x)
-			.attr('y', pos.y)
-			.attr('text-anchor', 'middle')
-			.attr('dominant-baseline', 'middle')
-			.attr('font-size', CONFIG.vertexLabel.fontSize)
-			.attr('font-family', CONFIG.vertexLabel.fontFamily)
-			.attr('fill', CONFIG.vertexLabel.color)
-			.style('pointer-events', 'none')
-			.text(label);
+	const createVertexLabel = (parent: d3.Selection<SVGGElement, unknown, null, undefined>, pos: { x: number; y: number }, label: string) =>
+		parent.append('text').attr('x', pos.x).attr('y', pos.y).attr('text-anchor', 'middle').attr('dominant-baseline', 'middle')
+			.attr('font-size', CONFIG.vertexLabel.fontSize).attr('font-family', CONFIG.vertexLabel.fontFamily)
+			.attr('fill', CONFIG.vertexLabel.color).style('pointer-events', 'none').text(label);
 
-	function createLabel(
-		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
-		gridPos: { x: number; y: number },
-		gridUp: boolean,
-		title: string,
-		subtitle: string
-	) {
-		const vertices = getTriangleVertices(gridPos, gridUp);
-		const center = getCentroid(vertices);
-
-		// Create title and subtitle text
+	const createLabel = (parent: d3.Selection<SVGGElement, unknown, null, undefined>, gridPos: { x: number; y: number }, gridUp: boolean, title: string, subtitle: string) => {
+		const center = getCentroid(getTriangleVertices(gridPos, gridUp));
 		[
 			{ text: title, y: center.y - CONFIG.label.spacing / 2, config: CONFIG.label.title },
 			{ text: subtitle, y: center.y + CONFIG.label.spacing / 2, config: CONFIG.label.subtitle }
-		].forEach(({ text, y, config }) => {
-			parent
-				.append('text')
-				.attr('x', center.x)
-				.attr('y', y)
-				.attr('text-anchor', 'middle')
-				.attr('dominant-baseline', 'middle')
-				.attr('font-size', config.fontSize)
-				.attr('font-family', config.fontFamily)
-				.attr('fill', config.color)
-				.style('pointer-events', 'none')
-				.text(text);
-		});
-	}
+		].forEach(({ text, y, config }) => 
+			parent.append('text').attr('x', center.x).attr('y', y).attr('text-anchor', 'middle')
+				.attr('dominant-baseline', 'middle').attr('font-size', config.fontSize)
+				.attr('font-family', config.fontFamily).attr('fill', config.color)
+				.style('pointer-events', 'none').text(text)
+		);
+	};
 </script>
 
 <!-- Control Panel -->
