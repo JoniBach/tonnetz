@@ -3,6 +3,7 @@
 	import * as d3 from 'd3';
 	import { CONFIG } from './config.js';
 	import { NOTES, NOTE_TO_SEMITONE, INTERVAL_NAMES, createGeometryConstants } from './constants.js';
+	import ControlPanel from './ControlPanel.svelte';
 	import './tonnetz.css';
 
 	let container: HTMLDivElement;
@@ -466,6 +467,11 @@
 			notes.add(note);
 		}
 
+		// Add pattern notes (chord patterns)
+		for (const note of highlightedPatternNotes) {
+			notes.add(note);
+		}
+
 		return Array.from(notes);
 	};
 
@@ -610,6 +616,10 @@
 		selectedChordPattern = patternName;
 		chordPatternRoot = rootNote;
 		highlightedPatternNotes = applyPattern(pattern, rootNote);
+		
+		// Trigger chord detection for triangle highlighting
+		debouncedChordCalculation();
+		
 		if (gridGroup) throttledDragUpdate();
 	};
 
@@ -640,6 +650,12 @@
 		selectedChordPattern = null;
 		chordPatternRoot = null;
 		highlightedPatternNotes.clear();
+		
+		// Clear chord cache and trigger recalculation
+		highlightedChordsCache.clear();
+		lastSelectedNotesHash = '';
+		debouncedChordCalculation();
+		
 		if (gridGroup) updateHighlightsOnly();
 	};
 
@@ -965,178 +981,33 @@
 </script>
 
 <!-- Control Panel -->
-<div class="control-panel">
-	<div
-		class="highlight-info sticky"
-		class:inactive={!highlightedNote &&
-			selectedNotes.size === 0 &&
-			highlightedPatternNotes.size === 0}
-	>
-		{#if getHighlightedChords().length > 0}
-			<span
-				>Playing: {showMusicalLabels
-					? getHighlightedChords()
-							.map((c) => `${c.split('-')[0]} ${c.includes('-up') ? '(minor)' : '(major)'}`)
-							.join(', ')
-					: getCoordinatePattern()}</span
-			>
-		{:else if highlightedNote}
-			<span
-				>Playing: {showMusicalLabels
-					? highlightedNote
-					: getCoordinateForNote(highlightedNote)}</span
-			>
-		{:else if selectedNotes.size > 0}
-			<span
-				>Selected: {showMusicalLabels
-					? Array.from(selectedNotes).join(', ')
-					: getCoordinatePattern()} ({selectedNotes.size} notes)</span
-			>
-		{:else if selectedChordPattern && chordPatternRoot}
-			<span
-				>Pattern: {selectedChordPattern}
-				{showMusicalLabels ? `chord on ${chordPatternRoot}` : getCoordinatePattern()} ({highlightedPatternNotes.size}
-				notes)</span
-			>
-		{:else}
-			<span>Nothing playing{isShiftPressed ? ' - Hold Shift + Click to multi-select' : ''}</span>
-		{/if}
-	</div>
-	<label>
-		<input type="checkbox" bind:checked={showMusicalLabels} />
-		Show Musical Labels
-	</label>
-
-	<label>
-		<input type="checkbox" bind:checked={singleOctave} />
-		Single Octave
-	</label>
-	<div class="control-row">
-		<label>
-			Root Note:
-			<select bind:value={currentRootNote}>
-				{#each NOTES as note}
-					<option value={note}>{note}</option>
-				{/each}
-			</select>
-		</label>
-	</div>
-
-	<div class="control-row">
-		<label>
-			Tonnetz Type:
-			<select
-				bind:value={currentTonnetzName}
-				on:change={(e) => changeTonnetzPreset((e.target as HTMLSelectElement)?.value || '')}
-			>
-				{#each Object.keys(CONFIG.tonnetz.presets) as presetName}
-					<option value={presetName}>{presetName}</option>
-				{/each}
-			</select>
-		</label>
-	</div>
-
-	<div class="control-row custom-intervals">
-		<label>
-			Q Interval:
-			<input type="number" min="1" max="11" bind:value={qInterval} />
-			<span class="interval-desc">{getIntervalDescription(qInterval)}</span>
-		</label>
-
-		<label>
-			R Interval:
-			<input type="number" min="1" max="11" bind:value={rInterval} />
-			<span class="interval-desc">{getIntervalDescription(rInterval)}</span>
-		</label>
-	</div>
-
-	<div class="control-row chord-patterns">
-		<span>Chord Patterns:</span>
-		<div class="pattern-grid">
-			{#each Object.keys(CONFIG.chordPatterns.presets) as patternName}
-				<button
-					class="pattern-btn"
-					class:active={selectedChordPattern === patternName}
-					on:click={() => {
-						if (selectedChordPattern === patternName) {
-							clearChordPattern();
-						} else if (highlightedNote) {
-							applyChordPattern(patternName, highlightedNote);
-						} else {
-							// Default to C if no note selected
-							applyChordPattern(patternName, singleOctave ? 'C' : 'C4');
-						}
-					}}
-				>
-					{patternName}
-				</button>
-			{/each}
-		</div>
-		{#if selectedChordPattern}
-			<div class="pattern-info">
-				<small
-					>Click a note to apply {selectedChordPattern} pattern, or click the button again to clear</small
-				>
-			</div>
-		{/if}
-	</div>
-
-	<div class="control-row scale-patterns">
-		<span>Scale Patterns:</span>
-		<div class="pattern-grid">
-			{#each Object.keys(CONFIG.scales) as scaleName}
-				<button
-					class="pattern-btn scale-btn"
-					class:active={selectedScale === scaleName}
-					on:click={() => {
-						if (selectedScale === scaleName) {
-							clearScale();
-						} else {
-							// Use current root note or default to C
-							const rootNote = highlightedNote || (singleOctave ? 'C' : 'C4');
-							applyScale(scaleName, rootNote);
-						}
-					}}
-				>
-					{scaleName}
-				</button>
-			{/each}
-		</div>
-		{#if selectedScale && scaleRoot}
-			<div class="pattern-info">
-				<small>{selectedScale} scale on {scaleRoot}</small>
-			</div>
-		{/if}
-	</div>
-
-	<div class="control-row mode-patterns">
-		<span>Mode Patterns:</span>
-		<div class="pattern-grid">
-			{#each Object.keys(CONFIG.modes) as modeName}
-				<button
-					class="pattern-btn mode-btn"
-					class:active={selectedMode === modeName}
-					on:click={() => {
-						if (selectedMode === modeName) {
-							clearScale();
-						} else {
-							// Use current root note or default to C
-							const rootNote = highlightedNote || (singleOctave ? 'C' : 'C4');
-							applyMode(modeName, rootNote);
-						}
-					}}
-				>
-					{modeName}
-				</button>
-			{/each}
-		</div>
-		{#if selectedMode && scaleRoot}
-			<div class="pattern-info">
-				<small>{selectedMode} mode on {scaleRoot}</small>
-			</div>
-		{/if}
-	</div>
-</div>
+<ControlPanel
+	bind:highlightedNote
+	bind:selectedNotes
+	bind:highlightedPatternNotes
+	bind:selectedChordPattern
+	bind:chordPatternRoot
+	bind:selectedScale
+	bind:selectedMode
+	bind:scaleRoot
+	bind:isShiftPressed
+	bind:showMusicalLabels
+	bind:singleOctave
+	bind:currentRootNote
+	bind:currentTonnetzName
+	bind:qInterval
+	bind:rInterval
+	{getHighlightedChords}
+	{getCoordinatePattern}
+	{getCoordinateForNote}
+	{changeTonnetzPreset}
+	{getIntervalDescription}
+	{applyChordPattern}
+	{clearChordPattern}
+	{applyScale}
+	{applyMode}
+	{clearScale}
+/>
 
 <div bind:this={container} class="tonnetz-container">
 	<!-- SVG will be appended here by D3 -->
