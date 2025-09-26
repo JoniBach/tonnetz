@@ -124,7 +124,15 @@
 	const spacing = { row: TRI_HEIGHT, col: HALF_SIZE };
 	const scale = innerTriangle.size / baseTriangleSize;
 
-	// Reactive grid updates (but not during dragging to prevent flicker)
+	// Performance optimization caches
+	let coordinateCache = new Map<string, { q: number; r: number }>();
+	let coordinatePatternCache = new Map<string, string>();
+	let highlightedChordsCache = new Set<string>();
+	let lastSelectedNotesHash = '';
+	let debouncedChordTimeout: ReturnType<typeof setTimeout> | null = null;
+	let throttledDragTimeout: ReturnType<typeof setTimeout> | null = null;
+
+	// Reactive grid updates (but not during dragging to prevent flicker) - optimized with guards
 	$: if (
 		svg &&
 		!isDragging &&
@@ -132,18 +140,21 @@
 			showMusicalLabels !== undefined ||
 			singleOctave !== undefined ||
 			qInterval ||
-			rInterval ||
-			selectedNotes ||
-			selectedScale ||
-			selectedMode)
+			rInterval)
 	) {
+		// Only update viewport for configuration changes, not selection changes
 		updateViewport(currentTransform);
 	}
 
-	// Separate reactive update for highlights (immediate, no redraw)
-	$: if (svg && gridGroup && (highlightedNote !== null || selectedScale || selectedMode)) {
-		// Update highlights without full grid redraw
-		updateHighlightsOnly();
+	// Unified reactive update for all highlighting (optimized with debouncing)
+	$: if (svg && gridGroup && (highlightedNote !== null || selectedNotes.size > 0 || selectedScale || selectedMode || highlightedPatternNotes.size > 0)) {
+		// Debounce highlight updates to prevent excessive DOM manipulation
+		requestAnimationFrame(() => updateHighlightsOnly());
+	}
+
+	// Clear caches when root note changes
+	$: if (currentRootNote) {
+		clearCaches();
 	}
 
 	// Update CSS custom properties
@@ -179,11 +190,13 @@
 			.style('-ms-user-select', 'none')
 			.call(zoom)
 			.on('contextmenu', (e: Event) => e.preventDefault())
-			.on('mouseup', () => {
+			.on('mouseup', (event: MouseEvent) => {
 				isDragging = false;
-				if (!isShiftPressed) {
+				// Only clear selections if clicking on empty space (not on elements)
+				if (!isShiftPressed && event.target === event.currentTarget) {
 					highlightedNote = null;
 					selectedNotes.clear();
+					selectedNotes = new Set(selectedNotes); // Trigger reactivity
 				}
 				// Force update to ensure scale/mode highlights persist
 				if (gridGroup && (selectedScale || selectedMode)) {
@@ -312,6 +325,95 @@
 		return { q: Math.round(x / baseTriangleSize - r * 0.5), r };
 	};
 
+	// Performance optimization functions
+	const clearCaches = () => {
+		coordinateCache.clear();
+		coordinatePatternCache.clear();
+		highlightedChordsCache.clear();
+		lastSelectedNotesHash = '';
+	};
+
+	// Optimized coordinate lookup with caching and progressive search
+	const getNoteCoordsFromCache = (noteName: string): { q: number; r: number } | null => {
+		const cacheKey = `${noteName}-${currentRootNote}-${qInterval}-${rInterval}`;
+		
+		if (coordinateCache.has(cacheKey)) {
+			return coordinateCache.get(cacheKey)!;
+		}
+
+		// Progressive search with increasing ranges for better performance
+		const searchRanges = [5, 10, 20];
+		
+		for (const range of searchRanges) {
+			for (let q = -range; q <= range; q++) {
+				for (let r = -range; r <= range; r++) {
+					const foundNote = getPitchWithOctave(q, r, currentRootNote);
+					if (foundNote === noteName) {
+						const coords = { q, r };
+						coordinateCache.set(cacheKey, coords);
+						return coords;
+					}
+				}
+			}
+		}
+		
+		return null;
+	};
+
+	// Fast triad combination generator (replaces recursive getCombinations for n=3)
+	const getTriadCombinations = (arr: string[]): string[][] => {
+		const result: string[][] = [];
+		for (let i = 0; i < arr.length - 2; i++) {
+			for (let j = i + 1; j < arr.length - 1; j++) {
+				for (let k = j + 1; k < arr.length; k++) {
+					result.push([arr[i], arr[j], arr[k]]);
+				}
+			}
+		}
+		return result;
+	};
+
+	// Debounced chord calculation to prevent excessive computation
+	const debouncedChordCalculation = () => {
+		if (debouncedChordTimeout) {
+			clearTimeout(debouncedChordTimeout);
+		}
+		
+		debouncedChordTimeout = setTimeout(() => {
+			const allNotes = getAllHighlightedNotes();
+			const currentHash = JSON.stringify([...allNotes].sort());
+			
+			// Only recalculate if notes have actually changed
+			if (currentHash !== lastSelectedNotesHash) {
+				lastSelectedNotesHash = currentHash;
+				highlightedChordsCache.clear();
+				
+				if (allNotes.length >= 3) {
+					const combinations = getTriadCombinations(allNotes);
+					for (const combination of combinations) {
+						const formedChord = getChordFromNotes(combination);
+						if (formedChord) {
+							highlightedChordsCache.add(formedChord);
+						}
+					}
+				}
+				
+				// Update highlights after calculation
+				requestAnimationFrame(() => updateHighlightsOnly());
+			}
+		}, 16); // ~60fps throttle
+	};
+
+	// Throttled drag update to prevent excessive DOM updates
+	const throttledDragUpdate = () => {
+		if (throttledDragTimeout) return;
+		
+		throttledDragTimeout = setTimeout(() => {
+			updateHighlightsOnly();
+			throttledDragTimeout = null;
+		}, 16); // ~60fps throttle
+	};
+
 	// Optimized chord detection with major/minor distinction
 	function getTriangleChord(row: number, col: number, isUp: boolean): string {
 		const pos = { x: col * spacing.col, y: row * spacing.row };
@@ -389,18 +491,18 @@
 				chordNotes.forEach((note) => selectedNotes.add(note));
 			}
 			selectedNotes = new Set(selectedNotes); // Trigger reactivity
+			// Clear single note highlight when using multi-select
+			highlightedNote = null;
 		} else {
 			// Normal single selection: clear everything and select chord notes
 			highlightedNote = null;
 			selectedNotes.clear();
 			chordNotes.forEach((note) => selectedNotes.add(note));
 			selectedNotes = new Set(selectedNotes); // Trigger reactivity
-
-			// Force immediate highlight update during drag
-			if (isDragging && gridGroup) {
-				updateHighlightsOnly();
-			}
 		}
+
+		// Trigger debounced chord calculation and highlight update
+		debouncedChordCalculation();
 	};
 
 	const highlightNote = (name: string) => {
@@ -412,15 +514,16 @@
 				selectedNotes.add(name);
 			}
 			selectedNotes = new Set(selectedNotes); // Trigger reactivity
+			// Clear single note highlight when using multi-select
+			highlightedNote = null;
 		} else {
 			// Normal single selection
 			highlightedNote = name;
 			selectedNotes.clear();
-			// Force immediate highlight update during drag
-			if (isDragging && gridGroup) {
-				updateHighlightsOnly();
-			}
 		}
+
+		// Trigger debounced chord calculation and highlight update
+		debouncedChordCalculation();
 	};
 
 	// Get notes that make up a chord
@@ -475,8 +578,12 @@
 		return null;
 	};
 
-	// Get all possible 3-note combinations from an array
+	// Legacy function kept for compatibility - redirects to optimized version
 	const getCombinations = (arr: string[], size: number): string[][] => {
+		if (size === 3) {
+			return getTriadCombinations(arr);
+		}
+		// Fallback for other sizes (rarely used)
 		if (size > arr.length) return [];
 		if (size === 1) return arr.map((item) => [item]);
 		if (size === arr.length) return [arr];
@@ -493,26 +600,15 @@
 	};
 
 	const isChordHighlighted = (name: string) => {
-		// Get all currently highlighted/selected notes
-		const allNotes = getAllHighlightedNotes();
-
-		// Add chord pattern notes to the check
-		const allNotesToCheck = [...allNotes];
-		if (highlightedPatternNotes.size > 0) {
-			for (const patternNote of highlightedPatternNotes) {
-				if (!allNotesToCheck.includes(patternNote)) {
-					allNotesToCheck.push(patternNote);
-				}
-			}
+		// Use cached chord detection for O(1) lookup
+		if (highlightedChordsCache.has(name)) {
+			return true;
 		}
 
-		// Check if any 3-note combination forms this chord
-		if (allNotesToCheck.length >= 3) {
-			const combinations = getCombinations(allNotesToCheck, 3);
-			for (const combination of combinations) {
-				const formedChord = getChordFromNotes(combination);
-				if (formedChord === name) return true;
-			}
+		// Trigger debounced calculation if cache is empty and we have notes
+		const allNotes = getAllHighlightedNotes();
+		if (allNotes.length >= 3 && highlightedChordsCache.size === 0) {
+			debouncedChordCalculation();
 		}
 
 		return false;
@@ -574,63 +670,48 @@
 		return Array.from(notes);
 	};
 
-	// Get all chords that are currently highlighted (formed by selected notes)
+	// Get all chords that are currently highlighted (formed by selected notes) - optimized with cache
 	const getHighlightedChords = (): string[] => {
+		// Use cached results for better performance
+		if (highlightedChordsCache.size > 0) {
+			return Array.from(highlightedChordsCache);
+		}
+
+		// Trigger calculation if cache is empty and we have enough notes
 		const allNotes = getAllHighlightedNotes();
-		const allNotesToCheck = [...allNotes];
-
-		// Add chord pattern notes to the check
-		if (highlightedPatternNotes.size > 0) {
-			for (const patternNote of highlightedPatternNotes) {
-				if (!allNotesToCheck.includes(patternNote)) {
-					allNotesToCheck.push(patternNote);
-				}
-			}
+		if (allNotes.length >= 3) {
+			debouncedChordCalculation();
 		}
 
-		const highlightedChords: string[] = [];
-
-		// Check if any 3-note combination forms a chord
-		if (allNotesToCheck.length >= 3) {
-			const combinations = getCombinations(allNotesToCheck, 3);
-			for (const combination of combinations) {
-				const formedChord = getChordFromNotes(combination);
-				if (formedChord && !highlightedChords.includes(formedChord)) {
-					highlightedChords.push(formedChord);
-				}
-			}
-		}
-
-		return highlightedChords;
+		return [];
 	};
 
-	// Get coordinate pattern from selected notes
+	// Get coordinate pattern from selected notes - optimized with caching
 	const getCoordinatePattern = (): string => {
 		const allNotes = getAllHighlightedNotes();
 		if (allNotes.length === 0 && highlightedPatternNotes.size === 0) return '';
 
-		// Get coordinates for all highlighted notes
-		const coordinates: Array<[number, number]> = [];
 		const notesToCheck =
 			highlightedPatternNotes.size > 0 ? Array.from(highlightedPatternNotes) : allNotes;
+		
+		// Create cache key
+		const cacheKey = `${JSON.stringify([...notesToCheck].sort())}-${currentRootNote}-${qInterval}-${rInterval}`;
+		
+		if (coordinatePatternCache.has(cacheKey)) {
+			return coordinatePatternCache.get(cacheKey)!;
+		}
 
-		// Find all note coordinates first - use a more direct approach
+		// Find all note coordinates using optimized cache lookup
 		const noteCoords: Array<{ note: string; q: number; r: number }> = [];
 
-		// Search through visible grid area to find coordinates for each note
 		for (const noteName of notesToCheck) {
-			let found = false;
-			// Search in a reasonable range around the current view
-			for (let q = -20; q <= 20 && !found; q++) {
-				for (let r = -20; r <= 20 && !found; r++) {
-					const foundNote = getPitchWithOctave(q, r, currentRootNote);
-					if (foundNote === noteName) {
-						noteCoords.push({ note: noteName, q, r });
-						found = true;
-					}
-				}
+			const coords = getNoteCoordsFromCache(noteName);
+			if (coords) {
+				noteCoords.push({ note: noteName, ...coords });
 			}
 		}
+
+		if (noteCoords.length === 0) return '';
 
 		// Find root note: use (0,0) if it exists, otherwise use the first note
 		let rootCoords: { q: number; r: number } | null = null;
@@ -641,14 +722,11 @@
 			rootCoords = { q: 0, r: 0 };
 		} else {
 			// Otherwise use the first note in the list as root
-			if (noteCoords.length > 0) {
-				rootCoords = { q: noteCoords[0].q, r: noteCoords[0].r };
-			}
+			rootCoords = { q: noteCoords[0].q, r: noteCoords[0].r };
 		}
 
-		if (!rootCoords) return '';
-
 		// Calculate relative coordinates from root
+		const coordinates: Array<[number, number]> = [];
 		for (const { q, r } of noteCoords) {
 			coordinates.push([q - rootCoords.q, r - rootCoords.r]);
 		}
@@ -656,21 +734,16 @@
 		// Sort coordinates for consistent display
 		coordinates.sort((a, b) => (a[0] === b[0] ? a[1] - b[1] : a[0] - b[0]));
 
-		return JSON.stringify(coordinates);
+		const result = JSON.stringify(coordinates);
+		coordinatePatternCache.set(cacheKey, result);
+		return result;
 	};
 
-	// Get coordinate for a single note
+	// Get coordinate for a single note - optimized with caching
 	const getCoordinateForNote = (noteName: string): string => {
-		// Find this note's coordinates
-		for (let row = -10; row <= 10; row++) {
-			for (let col = -10; col <= 10; col++) {
-				const pos = { x: col * spacing.col, y: row * spacing.row };
-				const { q, r } = cartesianToHex(pos.x, pos.y);
-				const foundNote = getPitchWithOctave(q, r, currentRootNote);
-				if (foundNote === noteName) {
-					return `(${q},${r})`;
-				}
-			}
+		const coords = getNoteCoordsFromCache(noteName);
+		if (coords) {
+			return `(${coords.q},${coords.r})`;
 		}
 		return '(?,?)';
 	};
@@ -719,7 +792,7 @@
 		return JSON.stringify(coordinates);
 	};
 
-	// Chord pattern functions
+	// Chord pattern functions - optimized with caching
 	const applyChordPattern = (patternName: string, rootNote: string) => {
 		const pattern =
 			CONFIG.chordPatterns.presets[patternName as keyof typeof CONFIG.chordPatterns.presets];
@@ -728,21 +801,8 @@
 		selectedChordPattern = patternName;
 		chordPatternRoot = rootNote;
 
-		// Find root note coordinates
-		let rootCoords: { q: number; r: number } | null = null;
-		for (let row = -10; row <= 10; row++) {
-			for (let col = -10; col <= 10; col++) {
-				const pos = { x: col * spacing.col, y: row * spacing.row };
-				const { q, r } = cartesianToHex(pos.x, pos.y);
-				const noteName = getPitchWithOctave(q, r, currentRootNote);
-				if (noteName === rootNote) {
-					rootCoords = { q, r };
-					break;
-				}
-			}
-			if (rootCoords) break;
-		}
-
+		// Find root note coordinates using cache
+		const rootCoords = getNoteCoordsFromCache(rootNote);
 		if (!rootCoords) return;
 
 		// Calculate pattern notes
@@ -755,8 +815,8 @@
 		}
 
 		highlightedPatternNotes = patternNotes;
-		// Force update
-		if (gridGroup) updateHighlightsOnly();
+		// Force update with throttling
+		if (gridGroup) throttledDragUpdate();
 	};
 
 	const clearChordPattern = () => {
@@ -766,7 +826,7 @@
 		if (gridGroup) updateHighlightsOnly();
 	};
 
-	// Scale highlighting functions
+	// Scale highlighting functions - optimized with caching
 	const applyScale = (scaleName: string, rootNote: string) => {
 		const pattern = CONFIG.scales[scaleName as keyof typeof CONFIG.scales];
 		if (!pattern || pattern.length === 0) return;
@@ -775,19 +835,8 @@
 		selectedMode = null; // Clear mode when selecting scale
 		scaleRoot = rootNote;
 
-		// Find root note coordinates
-		let rootCoords: { q: number; r: number } | null = null;
-		for (let q = -20; q <= 20; q++) {
-			for (let r = -20; r <= 20; r++) {
-				const foundNote = getPitchWithOctave(q, r, currentRootNote);
-				if (foundNote === rootNote) {
-					rootCoords = { q, r };
-					break;
-				}
-			}
-			if (rootCoords) break;
-		}
-
+		// Find root note coordinates using cache
+		const rootCoords = getNoteCoordsFromCache(rootNote);
 		if (!rootCoords) return;
 
 		// Calculate scale notes
@@ -801,11 +850,11 @@
 
 		highlightedScaleNotes = scaleNotes;
 
-		// Force update
-		if (gridGroup) updateHighlightsOnly();
+		// Force update with throttling
+		if (gridGroup) throttledDragUpdate();
 	};
 
-	// Apply mode by shifting the major scale pattern
+	// Apply mode by shifting the major scale pattern - optimized with caching
 	const applyMode = (modeName: string, rootNote: string) => {
 		const modeOffset = CONFIG.modes[modeName as keyof typeof CONFIG.modes];
 		if (modeOffset === undefined) return;
@@ -824,19 +873,8 @@
 		selectedScale = null; // Clear scale when selecting mode
 		scaleRoot = rootNote;
 
-		// Find root note coordinates
-		let rootCoords: { q: number; r: number } | null = null;
-		for (let q = -20; q <= 20; q++) {
-			for (let r = -20; r <= 20; r++) {
-				const foundNote = getPitchWithOctave(q, r, currentRootNote);
-				if (foundNote === rootNote) {
-					rootCoords = { q, r };
-					break;
-				}
-			}
-			if (rootCoords) break;
-		}
-
+		// Find root note coordinates using cache
+		const rootCoords = getNoteCoordsFromCache(rootNote);
 		if (!rootCoords) return;
 
 		// Calculate scale notes using shifted pattern
@@ -850,8 +888,8 @@
 
 		highlightedScaleNotes = scaleNotes;
 
-		// Force update
-		if (gridGroup) updateHighlightsOnly();
+		// Force update with throttling
+		if (gridGroup) throttledDragUpdate();
 	};
 
 	const clearScale = () => {
@@ -866,62 +904,59 @@
 		updateViewport(currentTransform);
 	}
 
-	// Fast highlight updates without full redraw
+	// Fast highlight updates without full redraw - optimized with native DOM methods
 	function updateHighlightsOnly() {
 		if (!gridGroup) return;
 
-		// Update triangle highlights
-		gridGroup
-			.selectAll('polygon')
-			.classed('highlighted-triangle', (d: any, i: number, nodes: any[]) => {
-				const element = d3.select(nodes[i]);
-				const triangleType = element.attr('data-triangle-type');
-				return triangleType && isChordHighlighted(triangleType);
-			})
-			.classed('scale-highlight', (d: any, i: number, nodes: any[]) => {
-				const element = d3.select(nodes[i]);
-				const triangleType = element.attr('data-triangle-type');
-				if (!triangleType) return false;
+		// Use native DOM methods for better performance
+		const svgElement = gridGroup.node();
+		if (!svgElement) return;
 
-				// Parse triangle type to get row, col, isUp
-				const [, orientation] = triangleType.split('-');
-				if (!orientation) return false;
+		// Update triangle highlights using native DOM
+		const triangles = svgElement.querySelectorAll('polygon[data-triangle-type]') as NodeListOf<SVGPolygonElement>;
+		for (const triangle of triangles) {
+			const triangleType = triangle.getAttribute('data-triangle-type');
+			if (!triangleType) continue;
 
-				// We need to find the triangle's position - this is a bit tricky from the DOM
-				// Let's use a different approach: check if any vertex notes are highlighted
-				const points = element.attr('points');
-				if (!points) return false;
+			// Update chord highlighting
+			const isChordHighlight = isChordHighlighted(triangleType);
+			triangle.classList.toggle('highlighted-triangle', isChordHighlight);
 
-				const coords = points.split(' ').map((point: string) => {
-					const [x, y] = point.split(',').map(Number);
-					return { x, y };
-				});
+			// Update scale highlighting for triangles
+			let isScaleHighlight = false;
+			if (highlightedScaleNotes.size > 0) {
+				const points = triangle.getAttribute('points');
+				if (points) {
+					const coords = points.split(' ').map((point: string) => {
+						const [x, y] = point.split(',').map(Number);
+						return { x, y };
+					});
 
-				// Check if ALL vertices are in the scale
-				for (const coord of coords) {
-					const { q, r } = cartesianToHex(coord.x, coord.y);
-					const noteName = getPitchWithOctave(q, r, currentRootNote);
-					if (!highlightedScaleNotes.has(noteName)) {
-						return false; // If any vertex is NOT in the scale, don't highlight
-					}
+					// Check if ALL vertices are in the scale
+					isScaleHighlight = coords.every((coord) => {
+						const { q, r } = cartesianToHex(coord.x, coord.y);
+						const noteName = getPitchWithOctave(q, r, currentRootNote);
+						return highlightedScaleNotes.has(noteName);
+					});
 				}
+			}
+			triangle.classList.toggle('scale-highlight', isScaleHighlight);
+		}
 
-				return true; // All vertices are in the scale
-			});
+		// Update vertex highlights using native DOM
+		const vertices = svgElement.querySelectorAll('circle[data-note]') as NodeListOf<SVGCircleElement>;
+		for (const vertex of vertices) {
+			const noteName = vertex.getAttribute('data-note');
+			if (!noteName) continue;
 
-		// Update vertex highlights
-		gridGroup
-			.selectAll('circle')
-			.classed('highlighted-vertex', (d: any, i: number, nodes: any[]) => {
-				const element = d3.select(nodes[i]);
-				const noteName = element.attr('data-note');
-				return noteName && isNoteHighlighted(noteName);
-			})
-			.classed('scale-highlight', (d: any, i: number, nodes: any[]) => {
-				const element = d3.select(nodes[i]);
-				const noteName = element.attr('data-note');
-				return noteName && isScaleHighlighted(noteName);
-			});
+			// Update note highlighting
+			const isNoteHighlight = isNoteHighlighted(noteName);
+			vertex.classList.toggle('highlighted-vertex', isNoteHighlight);
+
+			// Update scale highlighting for vertices
+			const isScaleHighlight = isScaleHighlighted(noteName);
+			vertex.classList.toggle('scale-highlight', isScaleHighlight);
+		}
 	}
 
 	function updateViewport(transform: d3.ZoomTransform) {
@@ -1042,16 +1077,19 @@
 			.on('mousedown', (event: MouseEvent) => {
 				if (event.button !== 0) return; // Only respond to left-click
 				event.preventDefault();
+				event.stopPropagation(); // Prevent global mouseup from interfering
 				isDragging = true;
 				const triangleType = getTriangleType(row, col, up);
 				highlightChord(triangleType);
 			})
 			.on('mouseenter', () => {
 				if (isDragging && !isShiftPressed) {
-					// Highlight during drag (only in normal mode, not multi-select)
+					// Highlight during drag (only in normal mode, not multi-select) with throttling
 					const triangleType = getTriangleType(row, col, up);
 					// Select the triangle's notes instead of highlighting chord directly
 					highlightChord(triangleType);
+					// Use throttled update for smooth performance
+					throttledDragUpdate();
 				}
 				if (!innerTriangleElement) {
 					innerTriangleElement = createInnerTriangleElement(innerTriangleParent, pos, up);
@@ -1122,6 +1160,7 @@
 			.on('mousedown', (event: MouseEvent) => {
 				if (event.button !== 0) return; // Only respond to left-click
 				event.preventDefault();
+				event.stopPropagation(); // Prevent global mouseup from interfering
 				isDragging = true;
 				const { q, r } = cartesianToHex(pos.x, pos.y);
 				const noteName = getPitchWithOctave(q, r, currentRootNote);
@@ -1135,12 +1174,12 @@
 			})
 			.on('mouseenter', () => {
 				if (isDragging && !isShiftPressed) {
-					// Highlight during drag (only in normal mode, not multi-select)
+					// Highlight during drag (only in normal mode, not multi-select) with throttling
 					const { q, r } = cartesianToHex(pos.x, pos.y);
 					const noteName = getPitchWithOctave(q, r, currentRootNote);
 					highlightedNote = noteName;
-					// Force immediate update during drag
-					setTimeout(() => updateHighlightsOnly(), 0);
+					// Use throttled update for smooth performance
+					throttledDragUpdate();
 				}
 				if (!innerCircleElement) {
 					innerCircleElement = createInnerCircleElement(innerCircleParent, pos);
