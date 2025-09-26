@@ -191,13 +191,20 @@
 			.call(zoom)
 			.on('contextmenu', (e: Event) => e.preventDefault())
 			.on('mouseup', (event: MouseEvent) => {
+				const wasDragging = isDragging;
 				isDragging = false;
-				// Only clear selections if clicking on empty space (not on elements)
-				if (!isShiftPressed && event.target === event.currentTarget) {
+				
+				// Clear selections after dragging ends (unless shift is pressed for multi-select)
+				if (wasDragging && !isShiftPressed) {
 					highlightedNote = null;
 					selectedNotes.clear();
 					selectedNotes = new Set(selectedNotes); // Trigger reactivity
+					
+					// Immediately clear chord cache when clearing selections
+					highlightedChordsCache.clear();
+					lastSelectedNotesHash = '';
 				}
+				
 				// Force update to ensure scale/mode highlights persist
 				if (gridGroup && (selectedScale || selectedMode)) {
 					updateHighlightsOnly();
@@ -1077,7 +1084,7 @@
 			.on('mousedown', (event: MouseEvent) => {
 				if (event.button !== 0) return; // Only respond to left-click
 				event.preventDefault();
-				event.stopPropagation(); // Prevent global mouseup from interfering
+				// Removed stopPropagation to allow global mouseup handler to work
 				isDragging = true;
 				const triangleType = getTriangleType(row, col, up);
 				highlightChord(triangleType);
@@ -1160,7 +1167,7 @@
 			.on('mousedown', (event: MouseEvent) => {
 				if (event.button !== 0) return; // Only respond to left-click
 				event.preventDefault();
-				event.stopPropagation(); // Prevent global mouseup from interfering
+				// Removed stopPropagation to allow global mouseup handler to work
 				isDragging = true;
 				const { q, r } = cartesianToHex(pos.x, pos.y);
 				const noteName = getPitchWithOctave(q, r, currentRootNote);
