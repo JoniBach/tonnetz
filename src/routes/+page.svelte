@@ -1,70 +1,17 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import * as d3 from 'd3';
-	import { presets, scales } from './patterns';
+	import { CONFIG } from './config.js';
+	import { NOTES, NOTE_TO_SEMITONE, INTERVAL_NAMES, createGeometryConstants } from './constants.js';
 	import './tonnetz.css';
 
 	let container: HTMLDivElement;
 	let svg: d3.Selection<SVGSVGElement, unknown, null, undefined>;
 	let gridGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
 
-	// Consolidated configuration
-	const CONFIG = {
-		// Core geometry
-		baseTriangleSize: 100,
-		gridExtent: 20,
-		zoomRange: 1.5,
-		
-		// Visual styling
-		triangle: { strokeWidth: 0.3, strokeColor: '#333', opacity: 1 },
-		vertex: { diameter: 30, color: '#1a1a1a', opacity: 1 },
-		innerTriangle: { size: 80, strokeWidth: 0.2, strokeColor: '#111', fillColor: '#1f1f1f', opacity: 0.8 },
-		innerCircle: { diameter: 25, strokeWidth: 0.2, strokeColor: '#111', fillColor: '#1f1f1f', opacity: 0.9 },
-		
-		// Typography
-		label: {
-			title: { fontSize: 8, color: '#666', fontFamily: 'Arial, sans-serif' },
-			subtitle: { fontSize: 6, color: '#555', fontFamily: 'Arial, sans-serif' },
-			spacing: 10
-		},
-		vertexLabel: { fontSize: 6, color: '#555', fontFamily: 'Arial, sans-serif' },
-		
-		// Music theory
-		music: { rootNote: 'C', showMusicalLabels: true, singleOctave: true, octaveRange: { min: 0, max: 8 } },
-		tonnetz: {
-			qInterval: 7, rInterval: 4, name: 'Neo-Riemannian',
-			presets: {
-				'Neo-Riemannian': { qInterval: 7, rInterval: 4 },
-				Chromatic: { qInterval: 1, rInterval: 1 },
-				'Whole Tone': { qInterval: 2, rInterval: 2 },
-				Quartal: { qInterval: 5, rInterval: 5 },
-				Augmented: { qInterval: 4, rInterval: 8 },
-				'Shepard Tone': { qInterval: 12, rInterval: 7 }
-			}
-		},
-		
-		// Highlighting
-		highlight: { color: '#ff6b35', strokeWidth: 2, fillOpacity: 0.1, transitionDuration: 0.1, easing: 'ease' },
-		highlightColors: { primary: '#4a90e2', secondary: '#7ed321', tertiary: '#f5a623' },
-		
-		// Patterns and scales
-		chordPatterns: { presets },
-		scales,
-		modes: { 'Ionian (Major)': 0, Dorian: -1, Phrygian: -2, Lydian: 1, Mixolydian: -1, 'Aeolian (Minor)': -2, Locrian: -3 },
-		
-		background: '#1a1a1a'
-	};
-
-	// Constants
-	const SQRT3 = Math.sqrt(3);
+	// Derived constants
 	const { baseTriangleSize, gridExtent, innerTriangle } = CONFIG;
-	const HALF_SIZE = baseTriangleSize * 0.5;
-	const TRI_HEIGHT = baseTriangleSize * SQRT3 * 0.5;
-	const spacing = { row: TRI_HEIGHT, col: HALF_SIZE };
-	const scale = innerTriangle.size / baseTriangleSize;
-	const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] as const;
-	const NOTE_TO_SEMITONE: Record<string, number> = Object.fromEntries(NOTES.map((note, i) => [note, i]));
-	const INTERVAL_NAMES = ['Unison', 'Minor 2nd', 'Major 2nd', 'Minor 3rd', 'Major 3rd', 'Perfect 4th', 'Tritone', 'Perfect 5th', 'Minor 6th', 'Major 6th', 'Minor 7th', 'Major 7th'];
+	const { HALF_SIZE, TRI_HEIGHT, spacing, scale } = createGeometryConstants(CONFIG);
 
 	// State variables
 	let currentRootNote = CONFIG.music.rootNote, showMusicalLabels = true, singleOctave = CONFIG.music.singleOctave;
