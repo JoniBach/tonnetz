@@ -1,6 +1,122 @@
 <script>
 	import { CONFIG } from './config.js';
 	import { NOTES, INTERVAL_NAMES } from './constants.js';
+	import { initAudio, sustainNotes, stopSustainedNotes, updateAudioSettings, disposeAudio } from './simple-audio.js';
+	import { onDestroy } from 'svelte';
+
+	// Audio state
+	let isPlaying = false;
+	let audioConfig = { 
+		playbackMode: CONFIG.audio.playbackMode,
+		instrument: CONFIG.audio.instrument,
+		volume: CONFIG.audio.volume,
+		tempo: CONFIG.audio.tempo
+	};
+
+	// Update sustained audio based on current selection
+	const updateSustainedAudio = async () => {
+		try {
+			await initAudio();
+			const notes = getCurrentNotes();
+			
+			if (notes.length > 0) {
+				isPlaying = true;
+				await sustainNotes(notes);
+			} else {
+				isPlaying = false;
+				stopSustainedNotes();
+			}
+		} catch (error) {
+			console.error('Error updating sustained audio:', error);
+			isPlaying = false;
+		}
+	};
+
+	// Auto-update sustained audio when selection changes (minimal debouncing for responsiveness)
+	let autoPlayTimeout = null;
+	const debouncedAudioUpdate = () => {
+		if (autoPlayTimeout) clearTimeout(autoPlayTimeout);
+		autoPlayTimeout = setTimeout(() => {
+			updateSustainedAudio();
+		}, 16); // 16ms debounce (~60fps) for instant feel
+	};
+
+	// Watch for changes in highlighted notes and update sustained audio
+	$: {
+		// Only trigger when there are actual changes in selection
+		const hasHighlighted = highlightedNote !== null;
+		const hasSelected = selectedNotes && selectedNotes.size > 0;
+		const hasPattern = highlightedPatternNotes && highlightedPatternNotes.size > 0;
+		
+		if (hasHighlighted || hasSelected || hasPattern) {
+			debouncedAudioUpdate();
+		} else {
+			// Stop audio when nothing is selected
+			stopSustainedNotes();
+			isPlaying = false;
+		}
+	}
+
+	// Export the play function so parent can call it
+	export const playAudio = updateSustainedAudio;
+
+	// Stop current playback
+	const stopPlayback = () => {
+		stopSustainedNotes();
+		isPlaying = false;
+	};
+
+	// Calculate chord tones from root note and chord type
+	const getChordTones = (root, isMinor = false) => {
+		const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+		const rootIndex = notes.indexOf(root);
+		if (rootIndex === -1) return [root];
+		
+		// Major triad: root, major third (4 semitones), perfect fifth (7 semitones)
+		// Minor triad: root, minor third (3 semitones), perfect fifth (7 semitones)
+		const thirdInterval = isMinor ? 3 : 4;
+		const fifthInterval = 7;
+		
+		return [
+			root,
+			notes[(rootIndex + thirdInterval) % 12],
+			notes[(rootIndex + fifthInterval) % 12]
+		];
+	};
+
+	// Get current notes to play
+	const getCurrentNotes = () => {
+		if (getHighlightedChords().length > 0) {
+			// Extract all chord tones from highlighted chords
+			const allChordTones = [];
+			for (const chord of getHighlightedChords()) {
+				const [root, orientation] = chord.split('-');
+				const isMinor = orientation === 'up'; // up triangles are minor, down are major
+				const chordTones = getChordTones(root, isMinor);
+				allChordTones.push(...chordTones);
+			}
+			// Remove duplicates
+			return [...new Set(allChordTones)];
+		} else if (selectedNotes.size > 0) {
+			// Prioritize selected notes over single highlighted note
+			return Array.from(selectedNotes);
+		} else if (highlightedNote) {
+			return [highlightedNote];
+		} else if (highlightedPatternNotes.size > 0) {
+			return Array.from(highlightedPatternNotes);
+		}
+		return [];
+	};
+
+	// Update audio settings when config changes
+	$: {
+		updateAudioSettings(audioConfig);
+	}
+
+	// Cleanup on component destroy
+	onDestroy(() => {
+		disposeAudio();
+	});
 
 	// Props - data passed from parent component
 	export let highlightedNote;
@@ -68,6 +184,45 @@
 		{:else}
 			<span>Nothing playing{isShiftPressed ? ' - Hold Shift + Click to multi-select' : ''}</span>
 		{/if}
+	</div>
+
+	<!-- Audio Status -->
+	<div class="control-row audio-status">
+		<span>🔊 Audio: {isPlaying ? 'Playing' : 'Ready'}</span>
+	</div>
+
+	<!-- Audio Settings -->
+	<div class="control-row audio-settings">
+		<label>
+			Playback Mode:
+			<select bind:value={audioConfig.playbackMode}>
+				<option value="chord">Chord (simultaneous)</option>
+				<option value="arpeggio">Arpeggio (overlapping)</option>
+				<option value="sequential">Sequential</option>
+			</select>
+		</label>
+		
+		<label>
+			Instrument:
+			<select bind:value={audioConfig.instrument}>
+				<option value="synth">Synth</option>
+				<option value="piano">Piano</option>
+				<option value="guitar">Guitar</option>
+				<option value="bass">Bass</option>
+			</select>
+		</label>
+		
+		<label>
+			Tempo:
+			<input type="range" min="60" max="200" bind:value={audioConfig.tempo} />
+			<span class="tempo-display">{audioConfig.tempo} BPM</span>
+		</label>
+		
+		<label>
+			Volume:
+			<input type="range" min="-40" max="0" bind:value={audioConfig.volume} />
+			<span class="volume-display">{audioConfig.volume} dB</span>
+		</label>
 	</div>
 	
 	<label>
