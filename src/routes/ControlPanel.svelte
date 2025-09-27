@@ -1,12 +1,18 @@
 <script>
 	import { CONFIG } from './config.js';
 	import { NOTES, INTERVAL_NAMES } from './constants.js';
-	import { initAudio, sustainNotes, stopSustainedNotes, updateAudioSettings, disposeAudio } from './simple-audio.js';
+	import {
+		initAudio,
+		sustainNotes,
+		stopSustainedNotes,
+		updateAudioSettings,
+		disposeAudio
+	} from './simple-audio.js';
 	import { onDestroy } from 'svelte';
 
 	// Audio state
 	let isPlaying = false;
-	let audioConfig = { 
+	let audioConfig = {
 		playbackMode: CONFIG.audio.playbackMode,
 		instrument: CONFIG.audio.instrument,
 		volume: CONFIG.audio.volume,
@@ -18,7 +24,7 @@
 		try {
 			await initAudio();
 			const notes = getCurrentNotes();
-			
+
 			if (notes.length > 0) {
 				isPlaying = true;
 				await sustainNotes(notes);
@@ -47,7 +53,7 @@
 		const hasHighlighted = highlightedNote !== null;
 		const hasSelected = selectedNotes && selectedNotes.size > 0;
 		const hasPattern = highlightedPatternNotes && highlightedPatternNotes.size > 0;
-		
+
 		if (hasHighlighted || hasSelected || hasPattern) {
 			debouncedAudioUpdate();
 		} else {
@@ -71,17 +77,13 @@
 		const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 		const rootIndex = notes.indexOf(root);
 		if (rootIndex === -1) return [root];
-		
+
 		// Major triad: root, major third (4 semitones), perfect fifth (7 semitones)
 		// Minor triad: root, minor third (3 semitones), perfect fifth (7 semitones)
 		const thirdInterval = isMinor ? 3 : 4;
 		const fifthInterval = 7;
-		
-		return [
-			root,
-			notes[(rootIndex + thirdInterval) % 12],
-			notes[(rootIndex + fifthInterval) % 12]
-		];
+
+		return [root, notes[(rootIndex + thirdInterval) % 12], notes[(rootIndex + fifthInterval) % 12]];
 	};
 
 	// Get current notes to play
@@ -192,7 +194,7 @@
 	</div>
 
 	<!-- Audio Settings -->
-	<div class="control-row audio-settings">
+	<div class="audio-settings">
 		<label>
 			Playback Mode:
 			<select bind:value={audioConfig.playbackMode}>
@@ -201,7 +203,7 @@
 				<option value="sequential">Sequential</option>
 			</select>
 		</label>
-		
+
 		<label>
 			Instrument:
 			<select bind:value={audioConfig.instrument}>
@@ -211,20 +213,20 @@
 				<option value="bass">Bass</option>
 			</select>
 		</label>
-		
+
 		<label>
 			Tempo:
 			<input type="range" min="60" max="200" bind:value={audioConfig.tempo} />
 			<span class="tempo-display">{audioConfig.tempo} BPM</span>
 		</label>
-		
+
 		<label>
 			Volume:
 			<input type="range" min="-40" max="0" bind:value={audioConfig.volume} />
 			<span class="volume-display">{audioConfig.volume} dB</span>
 		</label>
 	</div>
-	
+
 	<label>
 		<input type="checkbox" bind:checked={showMusicalLabels} />
 		Show Musical Labels
@@ -234,7 +236,7 @@
 		<input type="checkbox" bind:checked={singleOctave} />
 		Single Octave
 	</label>
-	
+
 	<div class="control-row">
 		<label>
 			Root Note:
@@ -251,7 +253,7 @@
 			Tonnetz Type:
 			<select
 				bind:value={currentTonnetzName}
-				on:change={(e) => changeTonnetzPreset((e.target)?.value || '')}
+				on:change={(e) => changeTonnetzPreset(e.target?.value || '')}
 			>
 				{#each Object.keys(CONFIG.tonnetz.presets) as presetName}
 					<option value={presetName}>{presetName}</option>
