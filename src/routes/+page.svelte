@@ -3,6 +3,7 @@
 	import * as d3 from 'd3';
 	import { CONFIG } from './config.js';
 	import { NOTES, NOTE_TO_SEMITONE, INTERVAL_NAMES, createGeometryConstants } from './constants.js';
+	import * as Utils from './utils.js';
 	import ControlPanel from './ControlPanel.svelte';
 	import './tonnetz.css';
 
@@ -133,54 +134,26 @@
 	let viewportUpdateTimeout: ReturnType<typeof setTimeout>;
 	let currentTransform: d3.ZoomTransform = d3.zoomIdentity;
 
-	// Optimized utility functions
-	const getTriangleVertices = (pos: { x: number; y: number }, up: boolean) => {
-		const { x, y } = pos;
-		return up
-			? [
-					{ x, y },
-					{ x: x - HALF_SIZE, y: y + TRI_HEIGHT },
-					{ x: x + HALF_SIZE, y: y + TRI_HEIGHT }
-				]
-			: [
-					{ x: x - HALF_SIZE, y },
-					{ x: x + HALF_SIZE, y },
-					{ x, y: y + TRI_HEIGHT }
-				];
-	};
+	// Wrapper functions that inject dependencies into pure functions
+	const getTriangleVertices = (pos: { x: number; y: number }, up: boolean) => 
+		Utils.getTriangleVertices(pos, up, HALF_SIZE, TRI_HEIGHT);
 
-	const getCentroid = (vertices: { x: number; y: number }[]) => ({
-		x: vertices.reduce((sum, v) => sum + v.x, 0) / 3,
-		y: vertices.reduce((sum, v) => sum + v.y, 0) / 3
-	});
+	const getCentroid = (vertices: { x: number; y: number }[]) => 
+		Utils.getCentroid(vertices);
 
-	// Fast visibility check
-	const isVisible = (
-		pos: { x: number; y: number },
-		transform: d3.ZoomTransform,
-		bufferSize: number
-	) => {
-		const screenPos = transform.apply([pos.x, pos.y]);
-		const buffer = bufferSize * transform.k;
-		return (
-			screenPos[0] > -buffer &&
-			screenPos[0] < window.innerWidth + buffer &&
-			screenPos[1] > -buffer &&
-			screenPos[1] < window.innerHeight + buffer
-		);
-	};
+	const isVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform, bufferSize: number) => 
+		Utils.isVisible(pos, transform, bufferSize);
 
-	// Math and coordinate functions
-	const mod12 = (n: number) => ((n % 12) + 12) % 12;
-	const pitchClass = (q: number, r: number, root = 0) => root + qInterval * q + rInterval * r;
-	const getPitchWithOctave = (q: number, r: number, rootNote: string) => {
-		const fullPitch = pitchClass(q, r, NOTE_TO_SEMITONE[rootNote]);
-		return singleOctave ? NOTES[mod12(fullPitch)] : `${NOTES[mod12(fullPitch)]}${Math.floor(fullPitch / 12) + 4}`;
-	};
-	const cartesianToHex = (x: number, y: number) => {
-		const r = Math.round(y / TRI_HEIGHT);
-		return { q: Math.round(x / baseTriangleSize - r * 0.5), r };
-	};
+	const mod12 = (n: number) => Utils.mod12(n);
+	
+	const pitchClass = (q: number, r: number, root = 0) => 
+		Utils.pitchClass(q, r, root, qInterval, rInterval);
+	
+	const getPitchWithOctave = (q: number, r: number, rootNote: string) => 
+		Utils.getPitchWithOctave(q, r, rootNote, singleOctave, qInterval, rInterval, NOTES, NOTE_TO_SEMITONE);
+	
+	const cartesianToHex = (x: number, y: number) => 
+		Utils.cartesianToHex(x, y, baseTriangleSize, TRI_HEIGHT);
 
 	// Performance optimization functions
 	const clearCaches = () => {
@@ -190,45 +163,23 @@
 		lastSelectedNotesHash = '';
 	};
 
-	// Optimized coordinate lookup with caching and progressive search
+	// Coordinate lookup with caching
 	const getNoteCoordsFromCache = (noteName: string): { q: number; r: number } | null => {
-		const cacheKey = `${noteName}-${currentRootNote}-${qInterval}-${rInterval}`;
+		const cacheKey = Utils.createCacheKey(noteName, currentRootNote, qInterval, rInterval);
 		
 		if (coordinateCache.has(cacheKey)) {
 			return coordinateCache.get(cacheKey)!;
 		}
 
-		// Progressive search with increasing ranges for better performance
-		const searchRanges = [5, 10, 20];
-		
-		for (const range of searchRanges) {
-			for (let q = -range; q <= range; q++) {
-				for (let r = -range; r <= range; r++) {
-					const foundNote = getPitchWithOctave(q, r, currentRootNote);
-					if (foundNote === noteName) {
-						const coords = { q, r };
-						coordinateCache.set(cacheKey, coords);
-						return coords;
-					}
-				}
-			}
+		const coords = Utils.findNoteCoordinates(noteName, currentRootNote, qInterval, rInterval, getPitchWithOctave);
+		if (coords) {
+			coordinateCache.set(cacheKey, coords);
 		}
-		
-		return null;
+		return coords;
 	};
 
-	// Fast triad combination generator (replaces recursive getCombinations for n=3)
-	const getTriadCombinations = (arr: string[]): string[][] => {
-		const result: string[][] = [];
-		for (let i = 0; i < arr.length - 2; i++) {
-			for (let j = i + 1; j < arr.length - 1; j++) {
-				for (let k = j + 1; k < arr.length; k++) {
-					result.push([arr[i], arr[j], arr[k]]);
-				}
-			}
-		}
-		return result;
-	};
+	// Triad combination generator
+	const getTriadCombinations = (arr: string[]): string[][] => Utils.getTriadCombinations(arr);
 
 	// Debounced chord calculation to prevent excessive computation
 	const debouncedChordCalculation = () => {
@@ -456,24 +407,8 @@
 	};
 
 	// Get all currently highlighted/selected notes
-	const getAllHighlightedNotes = (): string[] => {
-		const notes = new Set<string>();
-
-		// Add directly highlighted note
-		if (highlightedNote) notes.add(highlightedNote);
-
-		// Add selected notes
-		for (const note of selectedNotes) {
-			notes.add(note);
-		}
-
-		// Add pattern notes (chord patterns)
-		for (const note of highlightedPatternNotes) {
-			notes.add(note);
-		}
-
-		return Array.from(notes);
-	};
+	const getAllHighlightedNotes = (): string[] => 
+		Utils.getAllHighlightedNotes(highlightedNote, selectedNotes, highlightedPatternNotes);
 
 	// Get all chords that are currently highlighted (formed by selected notes) - optimized with cache
 	const getHighlightedChords = (): string[] => {
@@ -598,17 +533,8 @@
 	};
 
 	// Generic pattern applier
-	const applyPattern = (pattern: [number, number][], rootNote: string) => {
-		const rootCoords = getNoteCoordsFromCache(rootNote);
-		if (!rootCoords) return new Set<string>();
-		
-		const notes = new Set<string>();
-		for (const [qOffset, rOffset] of pattern) {
-			const noteName = getPitchWithOctave(rootCoords.q + qOffset, rootCoords.r + rOffset, currentRootNote);
-			notes.add(noteName);
-		}
-		return notes;
-	};
+	const applyPattern = (pattern: [number, number][], rootNote: string) => 
+		Utils.applyPattern(pattern, rootNote, getNoteCoordsFromCache, getPitchWithOctave, currentRootNote);
 
 	const applyChordPattern = (patternName: string, rootNote: string) => {
 		const pattern = CONFIG.chordPatterns.presets[patternName as keyof typeof CONFIG.chordPatterns.presets] as [number, number][];
@@ -792,20 +718,10 @@
 
 	// Visibility functions
 	const isTriangleVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform) =>
-		isVisible(pos, transform, baseTriangleSize);
+		Utils.isTriangleVisible(pos, transform, baseTriangleSize);
 
-	const getVisibleBounds = (transform: d3.ZoomTransform) => {
-		const [width, height] = [window.innerWidth, window.innerHeight];
-		const [topLeft, bottomRight] = [transform.invert([0, 0]), transform.invert([width, height])];
-		const buffer = baseTriangleSize * 1.5;
-
-		return {
-			minRow: Math.floor((topLeft[1] - buffer) / spacing.row),
-			maxRow: Math.ceil((bottomRight[1] + buffer) / spacing.row),
-			minCol: Math.floor((topLeft[0] - buffer) / spacing.col),
-			maxCol: Math.ceil((bottomRight[0] + buffer) / spacing.col)
-		};
-	};
+	const getVisibleBounds = (transform: d3.ZoomTransform) => 
+		Utils.getVisibleBounds(transform, baseTriangleSize, spacing);
 
 	function createTriangleWithHover(
 		triangleParent: d3.Selection<SVGGElement, unknown, null, undefined>,
