@@ -67,14 +67,10 @@
 			.on('contextmenu', (e: Event) => e.preventDefault())
 			// Replace the existing mouseup handler with:
 			.on('mouseup', (event: MouseEvent) => {
-				const wasDragging = isDragging;
-				isDragging = false;
-
-				// Emit the mouse up event
 				eventSystem.emit('MOUSE_UP', {
 					x: event.clientX,
 					y: event.clientY,
-					wasDragging,
+					wasDragging: true,
 					shiftKey: event.shiftKey
 				});
 			});
@@ -816,7 +812,7 @@
 
 		// Create elements
 		triangleData.forEach(({ pos, isUp, row, col }) => {
-			createTriangleWithHover(triangles, innerTriangles, pos, isUp, row, col);
+			createTriangleBase(triangles, innerTriangles, pos, isUp, row, col);
 			if (isTriangleVisible(pos, transform)) {
 				const info = /*state*/ showMusicalLabels
 					? getTriangleChord(row, col, isUp)
@@ -833,10 +829,11 @@
 		});
 
 		vertexData.forEach(({ pos, label }) => {
-			createVertexWithHover(vertices, innerCircles, pos);
+			createCircleBase(vertices, innerCircles, pos);
 			createVertexLabel(vertexLabels, pos, label);
 		});
 	}
+
 	function handleMouseDown(
 		event: MouseEvent,
 		type: 'note' | 'chord',
@@ -929,7 +926,7 @@
 	const getVisibleBounds = (transform: d3.ZoomTransform) =>
 		Utils.getVisibleBounds(transform, CONFIG.baseTriangleSize, geometryConstants.spacing);
 
-	function createTriangleWithHover(
+	function createTriangleBase(
 		triangleParent: d3.Selection<SVGGElement, unknown, null, undefined>,
 		innerTriangleParent: d3.Selection<SVGGElement, unknown, null, undefined>,
 		pos: { x: number; y: number },
@@ -1020,7 +1017,7 @@
 			.style('pointer-events', 'none');
 	}
 
-	function createVertexWithHover(
+	function createCircleBase(
 		vertexParent: d3.Selection<SVGGElement, unknown, null, undefined>,
 		innerCircleParent: d3.Selection<SVGGElement, unknown, null, undefined>,
 		pos: { x: number; y: number }

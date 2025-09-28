@@ -49,7 +49,6 @@
 
 	// Watch for changes in highlighted notes and update sustained audio
 	$: {
-		// Only trigger when there are actual changes in selection
 		const hasHighlighted = highlightedNote !== null;
 		const hasSelected = selectedNotes && selectedNotes.size > 0;
 		const hasPattern = highlightedPatternNotes && highlightedPatternNotes.size > 0;
@@ -57,9 +56,11 @@
 		if (hasHighlighted || hasSelected || hasPattern) {
 			debouncedAudioUpdate();
 		} else {
-			// Stop audio when nothing is selected
-			stopSustainedNotes();
-			isPlaying = false;
+			if (isPlaying) {
+				// Only stop if we were playing
+				stopSustainedNotes();
+				isPlaying = false;
+			}
 		}
 	}
 
@@ -87,8 +88,18 @@
 	};
 
 	// Get current notes to play
+	// In ControlPanel.svelte, update the getCurrentNotes function:
 	const getCurrentNotes = () => {
-		if (getHighlightedChords().length > 0) {
+		// First priority: Individual note selections
+		if (selectedNotes.size > 0) {
+			return Array.from(selectedNotes);
+		}
+		// Second priority: Single highlighted note
+		else if (highlightedNote) {
+			return [highlightedNote];
+		}
+		// Third priority: Highlighted chords (triangles)
+		else if (getHighlightedChords().length > 0) {
 			// Extract all chord tones from highlighted chords
 			const allChordTones = [];
 			for (const chord of getHighlightedChords()) {
@@ -99,17 +110,13 @@
 			}
 			// Remove duplicates
 			return [...new Set(allChordTones)];
-		} else if (selectedNotes.size > 0) {
-			// Prioritize selected notes over single highlighted note
-			return Array.from(selectedNotes);
-		} else if (highlightedNote) {
-			return [highlightedNote];
-		} else if (highlightedPatternNotes.size > 0) {
+		}
+		// Last priority: Pattern notes
+		else if (highlightedPatternNotes.size > 0) {
 			return Array.from(highlightedPatternNotes);
 		}
 		return [];
 	};
-
 	// Update audio settings when config changes
 	$: {
 		updateAudioSettings(audioConfig);
