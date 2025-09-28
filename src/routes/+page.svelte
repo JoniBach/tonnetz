@@ -15,85 +15,85 @@
 
 	const geometryConstants = createGeometryConstants(CONFIG);
 
-	let tonnetzSystem = createTonnetzSystem(CONFIG);
+	let {
+		currentRootNote,
+		showMusicalLabels,
+		singleOctave,
+		currentTonnetzName,
+		qInterval,
+		rInterval,
+		highlightedNote,
+		isDragging,
+		isShiftPressed,
+		selectedNotes,
+		selectedChordPattern,
+		chordPatternRoot,
+		highlightedPatternNotes,
+		selectedScale,
+		selectedMode,
+		scaleRoot,
+		highlightedScaleNotes,
+		coordinateCache,
+		coordinatePatternCache,
+		highlightedChordsCache,
+		lastSelectedNotesHash,
+		debouncedChordTimeout,
+		throttledDragTimeout
+	} = createTonnetzSystem(CONFIG);
 
-	let currentRootNote = tonnetzSystem.currentRootNote,
-		showMusicalLabels = tonnetzSystem.showMusicalLabels,
-		singleOctave = tonnetzSystem.singleOctave,
-		currentTonnetzName = tonnetzSystem.currentTonnetzName,
-		qInterval = tonnetzSystem.qInterval,
-		rInterval = tonnetzSystem.rInterval,
-		highlightedNote = tonnetzSystem.highlightedNote,
-		isDragging = tonnetzSystem.isDragging,
-		isShiftPressed = tonnetzSystem.isShiftPressed,
-		selectedNotes = tonnetzSystem.selectedNotes,
-		selectedChordPattern = tonnetzSystem.selectedChordPattern,
-		chordPatternRoot = tonnetzSystem.chordPatternRoot,
-		highlightedPatternNotes = tonnetzSystem.highlightedPatternNotes,
-		selectedScale = tonnetzSystem.selectedScale,
-		selectedMode = tonnetzSystem.selectedMode,
-		scaleRoot = tonnetzSystem.scaleRoot,
-		highlightedScaleNotes = tonnetzSystem.highlightedScaleNotes,
-		coordinateCache = tonnetzSystem.coordinateCache,
-		coordinatePatternCache = tonnetzSystem.coordinatePatternCache,
-		highlightedChordsCache = tonnetzSystem.highlightedChordsCache,
-		lastSelectedNotesHash = tonnetzSystem.lastSelectedNotesHash,
-		debouncedChordTimeout = tonnetzSystem.debouncedChordTimeout,
-		throttledDragTimeout = tonnetzSystem.throttledDragTimeout;
-
-	function handleMidiFileChange(event) {
-		const file = event.target.files[0];
-		if (file) {
-			const reader = new FileReader();
-			reader.onload = (e) => {
-				const arrayBuffer = e.target.result;
-				const uint8Array = new Uint8Array(arrayBuffer);
-				midiFile = uint8Array;
-			};
-			reader.readAsArrayBuffer(file);
+	$: if (!isDragging) {
+		// Handle MIDI file changes
+		if (midiFile) {
+			console.log('MIDI file loaded:', midiFile);
 		}
-	}
 
-	$: if (midiFile) {
-		console.log('MIDI file loaded:', midiFile);
-	}
+		// Only proceed with updates if we have an SVG context
+		if (svg) {
+			// Update viewport when relevant state changes
+			if (
+				/*state*/ currentRootNote !== undefined ||
+				/*state*/ showMusicalLabels !== undefined ||
+				/*state*/ singleOctave !== undefined ||
+				/*state*/ qInterval ||
+				/*state*/ rInterval
+			) {
+				updateViewport(currentTransform);
+			}
 
-	// Reactive updates
-	$: if (
-		svg &&
-		!isDragging &&
-		(currentRootNote ||
-			showMusicalLabels !== undefined ||
-			singleOctave !== undefined ||
-			qInterval ||
-			rInterval)
-	) {
-		updateViewport(currentTransform);
-	}
-	$: if (
-		svg &&
-		gridGroup &&
-		(highlightedNote !== null ||
-			selectedNotes.size > 0 ||
-			selectedScale ||
-			selectedMode ||
-			highlightedPatternNotes.size > 0)
-	) {
-		requestAnimationFrame(() => updateHighlightsOnly());
-	}
-	$: if (currentRootNote) clearCaches();
-	$: if (container) {
-		const { color, strokeWidth, fillOpacity, transitionDuration, easing } = CONFIG.highlight;
-		const [r, g, b] = [color.slice(1, 3), color.slice(3, 5), color.slice(5, 7)].map((x) =>
-			parseInt(x, 16)
-		);
-		Object.assign(container.style, {
-			'--highlight-color-value': color,
-			'--highlight-stroke-width-value': strokeWidth.toString(),
-			'--highlight-fill-value': `rgba(${r}, ${g}, ${b}, ${fillOpacity})`,
-			'--highlight-transition-duration-value': `${transitionDuration}s`,
-			'--highlight-easing-value': easing
-		});
+			// Only update highlights if we have a grid group
+			if (gridGroup) {
+				const shouldUpdateHighlights =
+					/*state*/ highlightedNote !== null ||
+					/*state*/ selectedNotes.size > 0 ||
+					/*state*/ selectedScale ||
+					/*state*/ selectedMode ||
+					/*state*/ highlightedPatternNotes.size > 0;
+
+				if (shouldUpdateHighlights) {
+					requestAnimationFrame(() => updateHighlightsOnly());
+				}
+			}
+		}
+
+		// Clear caches when root note changes
+		if (/*state*/ currentRootNote) {
+			clearCaches();
+		}
+
+		// Update CSS custom properties (only when container exists)
+		if (container) {
+			const { color, strokeWidth, fillOpacity, transitionDuration, easing } = CONFIG.highlight;
+			const [r, g, b] = [color.slice(1, 3), color.slice(3, 5), color.slice(5, 7)].map((x) =>
+				parseInt(x, 16)
+			);
+			Object.assign(container.style, {
+				'--highlight-color-value': color,
+				'--highlight-stroke-width-value': strokeWidth.toString(),
+				'--highlight-fill-value': `rgba(${r}, ${g}, ${b}, ${fillOpacity})`,
+				'--highlight-transition-duration-value': `${transitionDuration}s`,
+				'--highlight-easing-value': easing
+			});
+		}
 	}
 
 	function initTonnetz() {
@@ -113,22 +113,22 @@
 			.call(zoom)
 			.on('contextmenu', (e: Event) => e.preventDefault())
 			.on('mouseup', (event: MouseEvent) => {
-				const wasDragging = isDragging;
-				isDragging = false;
+				const wasDragging = /*state*/ isDragging;
+				/*state*/ isDragging = false;
 
 				// Clear selections after dragging ends (unless shift is pressed for multi-select)
-				if (wasDragging && !isShiftPressed) {
-					highlightedNote = null;
-					selectedNotes.clear();
-					selectedNotes = new Set(selectedNotes); // Trigger reactivity
+				if (wasDragging && !(/*state*/ isShiftPressed)) {
+					/*state*/ highlightedNote = null;
+					/*state*/ selectedNotes.clear();
+					/*state*/ selectedNotes = new Set(/*state*/ selectedNotes); // Trigger reactivity
 
 					// Immediately clear chord cache when clearing selections
-					highlightedChordsCache.clear();
-					lastSelectedNotesHash = '';
+					/*state*/ highlightedChordsCache.clear();
+					/*state*/ lastSelectedNotesHash = '';
 				}
 
 				// Force update to ensure scale/mode highlights persist
-				if (gridGroup && (selectedScale || selectedMode)) {
+				if (gridGroup && /*state*/ (selectedScale || /*state*/ selectedMode)) {
 					updateHighlightsOnly();
 				}
 			});
@@ -140,13 +140,13 @@
 		// Keyboard event listeners for shift key
 		const handleKeyDown = (e: KeyboardEvent) => {
 			if (e.key === 'Shift') {
-				isShiftPressed = true;
+				/*state*/ isShiftPressed = true;
 			}
 		};
 
 		const handleKeyUp = (e: KeyboardEvent) => {
 			if (e.key === 'Shift') {
-				isShiftPressed = false;
+				/*state*/ isShiftPressed = false;
 			}
 		};
 
@@ -163,6 +163,7 @@
 			window.removeEventListener('keyup', handleKeyUp);
 		};
 	}
+
 	onMount(() => {
 		initTonnetz();
 	});
@@ -206,16 +207,16 @@
 	const mod12 = (n: number) => Utils.mod12(n);
 
 	const pitchClass = (q: number, r: number, root = 0) =>
-		Utils.pitchClass(q, r, root, qInterval, rInterval);
+		Utils.pitchClass(q, r, root, /*state*/ qInterval, /*state*/ rInterval);
 
 	const getPitchWithOctave = (q: number, r: number, rootNote: string) =>
 		Utils.getPitchWithOctave(
 			q,
 			r,
 			rootNote,
-			singleOctave,
-			qInterval,
-			rInterval,
+			/*state*/ singleOctave,
+			/*state*/ qInterval,
+			/*state*/ rInterval,
 			NOTES,
 			NOTE_TO_SEMITONE
 		);
@@ -225,29 +226,34 @@
 
 	// Performance optimization functions
 	const clearCaches = () => {
-		coordinateCache.clear();
-		coordinatePatternCache.clear();
-		highlightedChordsCache.clear();
-		lastSelectedNotesHash = '';
+		/*state*/ coordinateCache.clear();
+		/*state*/ coordinatePatternCache.clear();
+		/*state*/ highlightedChordsCache.clear();
+		/*state*/ lastSelectedNotesHash = '';
 	};
 
 	// Coordinate lookup with caching
 	const getNoteCoordsFromCache = (noteName: string): { q: number; r: number } | null => {
-		const cacheKey = Utils.createCacheKey(noteName, currentRootNote, qInterval, rInterval);
+		const cacheKey = Utils.createCacheKey(
+			noteName,
+			/*state*/ currentRootNote,
+			/*state*/ qInterval,
+			/*state*/ rInterval
+		);
 
-		if (coordinateCache.has(cacheKey)) {
-			return coordinateCache.get(cacheKey)!;
+		if (/*state*/ coordinateCache.has(cacheKey)) {
+			return /*state*/ coordinateCache.get(cacheKey)!;
 		}
 
 		const coords = Utils.findNoteCoordinates(
 			noteName,
-			currentRootNote,
-			qInterval,
-			rInterval,
+			/*state*/ currentRootNote,
+			/*state*/ qInterval,
+			/*state*/ rInterval,
 			getPitchWithOctave
 		);
 		if (coords) {
-			coordinateCache.set(cacheKey, coords);
+			/*state*/ coordinateCache.set(cacheKey, coords);
 		}
 		return coords;
 	};
@@ -257,25 +263,25 @@
 
 	// Debounced chord calculation to prevent excessive computation
 	const debouncedChordCalculation = () => {
-		if (debouncedChordTimeout) {
-			clearTimeout(debouncedChordTimeout);
+		if (/*state*/ debouncedChordTimeout) {
+			clearTimeout(/*state*/ debouncedChordTimeout);
 		}
 
-		debouncedChordTimeout = setTimeout(() => {
+		/*state*/ debouncedChordTimeout = setTimeout(() => {
 			const allNotes = getAllHighlightedNotes();
 			const currentHash = JSON.stringify([...allNotes].sort());
 
 			// Only recalculate if notes have actually changed
-			if (currentHash !== lastSelectedNotesHash) {
-				lastSelectedNotesHash = currentHash;
-				highlightedChordsCache.clear();
+			if (currentHash !== /*state*/ lastSelectedNotesHash) {
+				/*state*/ lastSelectedNotesHash = currentHash;
+				/*state*/ highlightedChordsCache.clear();
 
 				if (allNotes.length >= 3) {
 					const combinations = getTriadCombinations(allNotes);
 					for (const combination of combinations) {
 						const formedChord = getChordFromNotes(combination);
 						if (formedChord) {
-							highlightedChordsCache.add(formedChord);
+							/*state*/ highlightedChordsCache.add(formedChord);
 						}
 					}
 				}
@@ -288,11 +294,11 @@
 
 	// Throttled drag update to prevent excessive DOM updates
 	const throttledDragUpdate = () => {
-		if (throttledDragTimeout) return;
+		if (/*state*/ throttledDragTimeout) return;
 
-		throttledDragTimeout = setTimeout(() => {
+		/*state*/ throttledDragTimeout = setTimeout(() => {
 			updateHighlightsOnly();
-			throttledDragTimeout = null;
+			/*state*/ throttledDragTimeout = null;
 		}, 16); // ~60fps throttle
 	};
 
@@ -302,7 +308,7 @@
 		const vertices = getTriangleVertices(pos, isUp);
 		const pitchClasses = vertices.map((v) => {
 			const { q, r } = cartesianToHex(v.x, v.y);
-			const fullPitch = pitchClass(q, r, NOTE_TO_SEMITONE[currentRootNote]);
+			const fullPitch = pitchClass(q, r, NOTE_TO_SEMITONE[/*state*/ currentRootNote]);
 			return mod12(fullPitch); // Always use mod12 for chord detection
 		});
 
@@ -333,9 +339,9 @@
 	const changeTonnetzPreset = (presetName: string) => {
 		const preset = CONFIG.tonnetz.presets[presetName as keyof typeof CONFIG.tonnetz.presets];
 		if (preset) {
-			currentTonnetzName = presetName;
-			qInterval = preset.qInterval;
-			rInterval = preset.rInterval;
+			/*state*/ currentTonnetzName = presetName;
+			/*state*/ qInterval = preset.qInterval;
+			/*state*/ rInterval = preset.rInterval;
 		}
 	};
 
@@ -347,26 +353,26 @@
 		// Get the notes that make up this chord
 		const chordNotes = getChordNotes(chordType);
 
-		if (isShiftPressed) {
+		if (/*state*/ isShiftPressed) {
 			// Toggle selection: if all notes are selected, deselect them; otherwise select all
-			const allSelected = chordNotes.every((note) => selectedNotes.has(note));
+			const allSelected = chordNotes.every((note) => /*state*/ selectedNotes.has(note));
 
 			if (allSelected) {
 				// Deselect all chord notes
-				chordNotes.forEach((note) => selectedNotes.delete(note));
+				chordNotes.forEach((note) => /*state*/ selectedNotes.delete(note));
 			} else {
 				// Select all chord notes
-				chordNotes.forEach((note) => selectedNotes.add(note));
+				chordNotes.forEach((note) => /*state*/ selectedNotes.add(note));
 			}
-			selectedNotes = new Set(selectedNotes); // Trigger reactivity
+			/*state*/ selectedNotes = new Set(/*state*/ selectedNotes); // Trigger reactivity
 			// Clear single note highlight when using multi-select
-			highlightedNote = null;
+			/*state*/ highlightedNote = null;
 		} else {
 			// Normal single selection: clear everything and select chord notes
-			highlightedNote = null;
-			selectedNotes.clear();
-			chordNotes.forEach((note) => selectedNotes.add(note));
-			selectedNotes = new Set(selectedNotes); // Trigger reactivity
+			/*state*/ highlightedNote = null;
+			/*state*/ selectedNotes.clear();
+			chordNotes.forEach((note) => /*state*/ selectedNotes.add(note));
+			/*state*/ selectedNotes = new Set(/*state*/ selectedNotes); // Trigger reactivity
 		}
 
 		// Trigger debounced chord calculation and highlight update
@@ -374,13 +380,15 @@
 	};
 
 	const highlightNote = (name: string) => {
-		if (isShiftPressed) {
-			selectedNotes.has(name) ? selectedNotes.delete(name) : selectedNotes.add(name);
-			selectedNotes = new Set(selectedNotes);
-			highlightedNote = null;
+		if (/*state*/ isShiftPressed) {
+			/*state*/ selectedNotes.has(name)
+				? /*state*/ selectedNotes.delete(name)
+				: /*state*/ selectedNotes.add(name);
+			/*state*/ selectedNotes = new Set(/*state*/ selectedNotes);
+			/*state*/ highlightedNote = null;
 		} else {
-			highlightedNote = name;
-			selectedNotes.clear();
+			/*state*/ highlightedNote = name;
+			/*state*/ selectedNotes.clear();
 		}
 		debouncedChordCalculation();
 	};
@@ -405,7 +413,7 @@
 					const vertices = getTriangleVertices(pos, isUp);
 					return vertices.map((v) => {
 						const { q, r } = cartesianToHex(v.x, v.y);
-						return getPitchWithOctave(q, r, currentRootNote);
+						return getPitchWithOctave(q, r, /*state*/ currentRootNote);
 					});
 				}
 			}
@@ -428,7 +436,7 @@
 				const vertices = getTriangleVertices(pos, isUp);
 				const triangleNotes = vertices.map((v) => {
 					const { q, r } = cartesianToHex(v.x, v.y);
-					return getPitchWithOctave(q, r, currentRootNote);
+					return getPitchWithOctave(q, r, /*state*/ currentRootNote);
 				});
 
 				// Check if this triangle contains exactly the same notes
@@ -465,36 +473,45 @@
 	};
 
 	const isChordHighlighted = (name: string) => {
-		if (highlightedChordsCache.has(name)) return true;
+		if (/*state*/ highlightedChordsCache.has(name)) return true;
 		const allNotes = getAllHighlightedNotes();
-		if (allNotes.length >= 3 && highlightedChordsCache.size === 0) debouncedChordCalculation();
+		if (allNotes.length >= 3 && /*state*/ highlightedChordsCache.size === 0)
+			debouncedChordCalculation();
 		return false;
 	};
 
 	const isNoteHighlighted = (name: string) =>
-		highlightedNote === name || selectedNotes.has(name) || highlightedPatternNotes.has(name);
+		/*state*/ highlightedNote === name ||
+		/*state*/ selectedNotes.has(name) ||
+		/*state*/ highlightedPatternNotes.has(name);
 
-	const isScaleHighlighted = (name: string) => highlightedScaleNotes.has(name);
+	const isScaleHighlighted = (name: string) => /*state*/ highlightedScaleNotes.has(name);
 
 	const isTriangleScaleHighlighted = (row: number, col: number, isUp: boolean) => {
-		if (highlightedScaleNotes.size === 0) return false;
+		if (/*state*/ highlightedScaleNotes.size === 0) return false;
 		const pos = { x: col * geometryConstants.spacing.col, y: row * geometryConstants.spacing.row };
 		const vertices = getTriangleVertices(pos, isUp);
 		return vertices.every((v) => {
 			const { q, r } = cartesianToHex(v.x, v.y);
-			return highlightedScaleNotes.has(getPitchWithOctave(q, r, currentRootNote));
+			return /*state*/ highlightedScaleNotes.has(
+				getPitchWithOctave(q, r, /*state*/ currentRootNote)
+			);
 		});
 	};
 
 	// Get all currently highlighted/selected notes
 	const getAllHighlightedNotes = (): string[] =>
-		Utils.getAllHighlightedNotes(highlightedNote, selectedNotes, highlightedPatternNotes);
+		Utils.getAllHighlightedNotes(
+			/*state*/ highlightedNote,
+			/*state*/ selectedNotes,
+			/*state*/ highlightedPatternNotes
+		);
 
 	// Get all chords that are currently highlighted (formed by selected notes) - optimized with cache
 	const getHighlightedChords = (): string[] => {
 		// Use cached results for better performance
-		if (highlightedChordsCache.size > 0) {
-			return Array.from(highlightedChordsCache);
+		if (/*state*/ highlightedChordsCache.size > 0) {
+			return Array.from(/*state*/ highlightedChordsCache);
 		}
 
 		// Trigger calculation if cache is empty and we have enough notes
@@ -509,16 +526,18 @@
 	// Get coordinate pattern from selected notes - optimized with caching
 	const getCoordinatePattern = (): string => {
 		const allNotes = getAllHighlightedNotes();
-		if (allNotes.length === 0 && highlightedPatternNotes.size === 0) return '';
+		if (allNotes.length === 0 && /*state*/ highlightedPatternNotes.size === 0) return '';
 
 		const notesToCheck =
-			highlightedPatternNotes.size > 0 ? Array.from(highlightedPatternNotes) : allNotes;
+			/*state*/ highlightedPatternNotes.size > 0
+				? Array.from(/*state*/ highlightedPatternNotes)
+				: allNotes;
 
 		// Create cache key
-		const cacheKey = `${JSON.stringify([...notesToCheck].sort())}-${currentRootNote}-${qInterval}-${rInterval}`;
+		const cacheKey = `${JSON.stringify([...notesToCheck].sort())}-${/*state*/ currentRootNote}-${/*state*/ qInterval}-${/*state*/ rInterval}`;
 
-		if (coordinatePatternCache.has(cacheKey)) {
-			return coordinatePatternCache.get(cacheKey)!;
+		if (/*state*/ coordinatePatternCache.has(cacheKey)) {
+			return /*state*/ coordinatePatternCache.get(cacheKey)!;
 		}
 
 		// Find all note coordinates using optimized cache lookup
@@ -555,7 +574,7 @@
 		coordinates.sort((a, b) => (a[0] === b[0] ? a[1] - b[1] : a[0] - b[0]));
 
 		const result = JSON.stringify(coordinates);
-		coordinatePatternCache.set(cacheKey, result);
+		/*state*/ coordinatePatternCache.set(cacheKey, result);
 		return result;
 	};
 
@@ -580,7 +599,7 @@
 			let found = false;
 			for (let q = -20; q <= 20 && !found; q++) {
 				for (let r = -20; r <= 20 && !found; r++) {
-					const foundNote = getPitchWithOctave(q, r, currentRootNote);
+					const foundNote = getPitchWithOctave(q, r, /*state*/ currentRootNote);
 					if (foundNote === noteName) {
 						noteCoords.push({ note: noteName, q, r });
 						found = true;
@@ -619,7 +638,7 @@
 			rootNote,
 			getNoteCoordsFromCache,
 			getPitchWithOctave,
-			currentRootNote
+			/*state*/ currentRootNote
 		);
 
 	const applyChordPattern = (patternName: string, rootNote: string) => {
@@ -627,9 +646,9 @@
 			patternName as keyof typeof CONFIG.chordPatterns.presets
 		] as [number, number][];
 		if (!pattern) return;
-		selectedChordPattern = patternName;
-		chordPatternRoot = rootNote;
-		highlightedPatternNotes = applyPattern(pattern, rootNote);
+		/*state*/ selectedChordPattern = patternName;
+		/*state*/ chordPatternRoot = rootNote;
+		/*state*/ highlightedPatternNotes = applyPattern(pattern, rootNote);
 
 		// Trigger chord detection for triangle highlighting
 		debouncedChordCalculation();
@@ -640,10 +659,10 @@
 	const applyScale = (scaleName: string, rootNote: string) => {
 		const pattern = CONFIG.scales[scaleName as keyof typeof CONFIG.scales] as [number, number][];
 		if (!pattern?.length) return;
-		selectedScale = scaleName;
-		selectedMode = null;
-		scaleRoot = rootNote;
-		highlightedScaleNotes = applyPattern(pattern, rootNote);
+		/*state*/ selectedScale = scaleName;
+		/*state*/ selectedMode = null;
+		/*state*/ scaleRoot = rootNote;
+		/*state*/ highlightedScaleNotes = applyPattern(pattern, rootNote);
 		if (gridGroup) throttledDragUpdate();
 	};
 
@@ -653,31 +672,31 @@
 		if (modeOffset === undefined || !majorPattern) return;
 
 		const shiftedPattern = majorPattern.map(([q, r]) => [q + modeOffset, r] as [number, number]);
-		selectedMode = modeName;
-		selectedScale = null;
-		scaleRoot = rootNote;
-		highlightedScaleNotes = applyPattern(shiftedPattern, rootNote);
+		/*state*/ selectedMode = modeName;
+		/*state*/ selectedScale = null;
+		/*state*/ scaleRoot = rootNote;
+		/*state*/ highlightedScaleNotes = applyPattern(shiftedPattern, rootNote);
 		if (gridGroup) throttledDragUpdate();
 	};
 
 	const clearChordPattern = () => {
-		selectedChordPattern = null;
-		chordPatternRoot = null;
-		highlightedPatternNotes.clear();
+		/*state*/ selectedChordPattern = null;
+		/*state*/ chordPatternRoot = null;
+		/*state*/ highlightedPatternNotes.clear();
 
 		// Clear chord cache and trigger recalculation
-		highlightedChordsCache.clear();
-		lastSelectedNotesHash = '';
+		/*state*/ highlightedChordsCache.clear();
+		/*state*/ lastSelectedNotesHash = '';
 		debouncedChordCalculation();
 
 		if (gridGroup) updateHighlightsOnly();
 	};
 
 	const clearScale = () => {
-		selectedScale = null;
-		selectedMode = null;
-		scaleRoot = null;
-		highlightedScaleNotes.clear();
+		/*state*/ selectedScale = null;
+		/*state*/ selectedMode = null;
+		/*state*/ scaleRoot = null;
+		/*state*/ highlightedScaleNotes.clear();
 		if (gridGroup) updateHighlightsOnly();
 	};
 
@@ -707,7 +726,7 @@
 
 			// Update scale highlighting for triangles
 			let isScaleHighlight = false;
-			if (highlightedScaleNotes.size > 0) {
+			if (/*state*/ highlightedScaleNotes.size > 0) {
 				const points = triangle.getAttribute('points');
 				if (points) {
 					const coords = points.split(' ').map((point: string) => {
@@ -718,8 +737,8 @@
 					// Check if ALL vertices are in the scale
 					isScaleHighlight = coords.every((coord) => {
 						const { q, r } = cartesianToHex(coord.x, coord.y);
-						const noteName = getPitchWithOctave(q, r, currentRootNote);
-						return highlightedScaleNotes.has(noteName);
+						const noteName = getPitchWithOctave(q, r, /*state*/ currentRootNote);
+						return /*state*/ highlightedScaleNotes.has(noteName);
 					});
 				}
 			}
@@ -786,8 +805,8 @@
 					if (!uniqueVertices.has(key)) {
 						uniqueVertices.add(key);
 						const { q, r } = cartesianToHex(v.x, v.y);
-						const label = showMusicalLabels
-							? getPitchWithOctave(q, r, currentRootNote)
+						const label = /*state*/ showMusicalLabels
+							? getPitchWithOctave(q, r, /*state*/ currentRootNote)
 							: `(${q},${r})`;
 						vertexData.push({ pos: v, label });
 					}
@@ -799,8 +818,16 @@
 		triangleData.forEach(({ pos, isUp, row, col }) => {
 			createTriangleWithHover(triangles, innerTriangles, pos, isUp, row, col);
 			if (isTriangleVisible(pos, transform)) {
-				const info = showMusicalLabels ? getTriangleChord(row, col, isUp) : `(${row},${col})`;
-				const subtitle = showMusicalLabels ? (isUp ? 'minor' : 'major') : isUp ? 'UP' : 'DOWN';
+				const info = /*state*/ showMusicalLabels
+					? getTriangleChord(row, col, isUp)
+					: `(${row},${col})`;
+				const subtitle = /*state*/ showMusicalLabels
+					? isUp
+						? 'minor'
+						: 'major'
+					: isUp
+						? 'UP'
+						: 'DOWN';
 				createLabel(labels, pos, isUp, info, subtitle);
 			}
 		});
@@ -856,12 +883,12 @@
 				if (event.button !== 0) return; // Only respond to left-click
 				event.preventDefault();
 				// Removed stopPropagation to allow global mouseup handler to work
-				isDragging = true;
+				/*state*/ isDragging = true;
 				const triangleType = getTriangleType(row, col, up);
 				highlightChord(triangleType);
 			})
 			.on('mouseenter', () => {
-				if (isDragging && !isShiftPressed) {
+				if (/*state*/ isDragging && !(/*state*/ isShiftPressed)) {
 					// Highlight during drag (only in normal mode, not multi-select) with throttling
 					const triangleType = getTriangleType(row, col, up);
 					// Select the triangle's notes instead of highlighting chord directly
@@ -917,16 +944,16 @@
 			.style('cursor', 'pointer')
 			.attr('data-note', () => {
 				const { q, r } = cartesianToHex(pos.x, pos.y);
-				return getPitchWithOctave(q, r, currentRootNote);
+				return getPitchWithOctave(q, r, /*state*/ currentRootNote);
 			})
 			.classed('highlighted-vertex', () => {
 				const { q, r } = cartesianToHex(pos.x, pos.y);
-				const noteName = getPitchWithOctave(q, r, currentRootNote);
+				const noteName = getPitchWithOctave(q, r, /*state*/ currentRootNote);
 				return isNoteHighlighted(noteName);
 			})
 			.classed('scale-highlight', () => {
 				const { q, r } = cartesianToHex(pos.x, pos.y);
-				const noteName = getPitchWithOctave(q, r, currentRootNote);
+				const noteName = getPitchWithOctave(q, r, /*state*/ currentRootNote);
 				return isScaleHighlighted(noteName);
 			})
 			.on('mouseleave', () => {
@@ -939,23 +966,23 @@
 				if (event.button !== 0) return; // Only respond to left-click
 				event.preventDefault();
 				// Removed stopPropagation to allow global mouseup handler to work
-				isDragging = true;
+				/*state*/ isDragging = true;
 				const { q, r } = cartesianToHex(pos.x, pos.y);
-				const noteName = getPitchWithOctave(q, r, currentRootNote);
+				const noteName = getPitchWithOctave(q, r, /*state*/ currentRootNote);
 
 				// If chord pattern is selected, apply it to this note
-				if (selectedChordPattern) {
-					applyChordPattern(selectedChordPattern, noteName);
+				if (/*state*/ selectedChordPattern) {
+					applyChordPattern(/*state*/ selectedChordPattern, noteName);
 				} else {
 					highlightNote(noteName);
 				}
 			})
 			.on('mouseenter', () => {
-				if (isDragging && !isShiftPressed) {
+				if (/*state*/ isDragging && !(/*state*/ isShiftPressed)) {
 					// Highlight during drag (only in normal mode, not multi-select) with throttling
 					const { q, r } = cartesianToHex(pos.x, pos.y);
-					const noteName = getPitchWithOctave(q, r, currentRootNote);
-					highlightedNote = noteName;
+					const noteName = getPitchWithOctave(q, r, /*state*/ currentRootNote);
+					/*state*/ highlightedNote = noteName;
 					// Use throttled update for smooth performance
 					throttledDragUpdate();
 				}
@@ -1023,6 +1050,19 @@
 				.text(text)
 		);
 	};
+
+	function handleMidiFileChange(event) {
+		const file = event.target.files[0];
+		if (file) {
+			const reader = new FileReader();
+			reader.onload = (e) => {
+				const arrayBuffer = e.target.result;
+				const uint8Array = new Uint8Array(arrayBuffer);
+				midiFile = uint8Array;
+			};
+			reader.readAsArrayBuffer(file);
+		}
+	}
 </script>
 
 <!-- Control Panel -->
