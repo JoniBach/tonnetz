@@ -10,35 +10,85 @@
 	let container: HTMLDivElement;
 	let svg: d3.Selection<SVGSVGElement, unknown, null, undefined>;
 	let gridGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
+	let midiFile: Uint8Array | null = null;
 
 	// Derived constants
 	const { baseTriangleSize, gridExtent, innerTriangle } = CONFIG;
 	const { HALF_SIZE, TRI_HEIGHT, spacing, scale } = createGeometryConstants(CONFIG);
 
 	// State variables
-	let currentRootNote = CONFIG.music.rootNote, showMusicalLabels = true, singleOctave = CONFIG.music.singleOctave;
-	let currentTonnetzName = CONFIG.tonnetz.name, qInterval = CONFIG.tonnetz.qInterval, rInterval = CONFIG.tonnetz.rInterval;
-	let highlightedNote: string | null = null, isDragging = false, isShiftPressed = false;
-	let selectedNotes = new Set<string>(), selectedChordPattern: string | null = null, chordPatternRoot: string | null = null;
-	let highlightedPatternNotes = new Set<string>(), selectedScale: string | null = null, selectedMode: string | null = null;
-	let scaleRoot: string | null = null, highlightedScaleNotes = new Set<string>();
+	let currentRootNote = CONFIG.music.rootNote,
+		showMusicalLabels = true,
+		singleOctave = CONFIG.music.singleOctave;
+	let currentTonnetzName = CONFIG.tonnetz.name,
+		qInterval = CONFIG.tonnetz.qInterval,
+		rInterval = CONFIG.tonnetz.rInterval;
+	let highlightedNote: string | null = null,
+		isDragging = false,
+		isShiftPressed = false;
+	let selectedNotes = new Set<string>(),
+		selectedChordPattern: string | null = null,
+		chordPatternRoot: string | null = null;
+	let highlightedPatternNotes = new Set<string>(),
+		selectedScale: string | null = null,
+		selectedMode: string | null = null;
+	let scaleRoot: string | null = null,
+		highlightedScaleNotes = new Set<string>();
 
 	// Performance caches
-	let coordinateCache = new Map<string, { q: number; r: number }>(), coordinatePatternCache = new Map<string, string>();
-	let highlightedChordsCache = new Set<string>(), lastSelectedNotesHash = '';
-	let debouncedChordTimeout: ReturnType<typeof setTimeout> | null = null, throttledDragTimeout: ReturnType<typeof setTimeout> | null = null;
+	let coordinateCache = new Map<string, { q: number; r: number }>(),
+		coordinatePatternCache = new Map<string, string>();
+	let highlightedChordsCache = new Set<string>(),
+		lastSelectedNotesHash = '';
+	let debouncedChordTimeout: ReturnType<typeof setTimeout> | null = null,
+		throttledDragTimeout: ReturnType<typeof setTimeout> | null = null;
+
+	function handleMidiFileChange(event) {
+		const file = event.target.files[0];
+		if (file) {
+			const reader = new FileReader();
+			reader.onload = (e) => {
+				const arrayBuffer = e.target.result;
+				const uint8Array = new Uint8Array(arrayBuffer);
+				midiFile = uint8Array;
+			};
+			reader.readAsArrayBuffer(file);
+		}
+	}
+
+	$: if (midiFile) {
+		console.log('MIDI file loaded:', midiFile);
+	}
 
 	// Reactive updates
-	$: if (svg && !isDragging && (currentRootNote || showMusicalLabels !== undefined || singleOctave !== undefined || qInterval || rInterval)) {
+	$: if (
+		svg &&
+		!isDragging &&
+		(currentRootNote ||
+			showMusicalLabels !== undefined ||
+			singleOctave !== undefined ||
+			qInterval ||
+			rInterval)
+	) {
 		updateViewport(currentTransform);
 	}
-	$: if (svg && gridGroup && (highlightedNote !== null || selectedNotes.size > 0 || selectedScale || selectedMode || highlightedPatternNotes.size > 0)) {
+	$: if (
+		svg &&
+		gridGroup &&
+		(highlightedNote !== null ||
+			selectedNotes.size > 0 ||
+			selectedScale ||
+			selectedMode ||
+			highlightedPatternNotes.size > 0)
+	) {
 		requestAnimationFrame(() => updateHighlightsOnly());
 	}
 	$: if (currentRootNote) clearCaches();
 	$: if (container) {
 		const { color, strokeWidth, fillOpacity, transitionDuration, easing } = CONFIG.highlight;
-		const [r, g, b] = [color.slice(1, 3), color.slice(3, 5), color.slice(5, 7)].map(x => parseInt(x, 16));
+		const [r, g, b] = [color.slice(1, 3), color.slice(3, 5), color.slice(5, 7)].map((x) =>
+			parseInt(x, 16)
+		);
 		Object.assign(container.style, {
 			'--highlight-color-value': color,
 			'--highlight-stroke-width-value': strokeWidth.toString(),
@@ -67,18 +117,18 @@
 			.on('mouseup', (event: MouseEvent) => {
 				const wasDragging = isDragging;
 				isDragging = false;
-				
+
 				// Clear selections after dragging ends (unless shift is pressed for multi-select)
 				if (wasDragging && !isShiftPressed) {
 					highlightedNote = null;
 					selectedNotes.clear();
 					selectedNotes = new Set(selectedNotes); // Trigger reactivity
-					
+
 					// Immediately clear chord cache when clearing selections
 					highlightedChordsCache.clear();
 					lastSelectedNotesHash = '';
 				}
-				
+
 				// Force update to ensure scale/mode highlights persist
 				if (gridGroup && (selectedScale || selectedMode)) {
 					updateHighlightsOnly();
@@ -135,24 +185,35 @@
 	let currentTransform: d3.ZoomTransform = d3.zoomIdentity;
 
 	// Wrapper functions that inject dependencies into pure functions
-	const getTriangleVertices = (pos: { x: number; y: number }, up: boolean) => 
+	const getTriangleVertices = (pos: { x: number; y: number }, up: boolean) =>
 		Utils.getTriangleVertices(pos, up, HALF_SIZE, TRI_HEIGHT);
 
-	const getCentroid = (vertices: { x: number; y: number }[]) => 
-		Utils.getCentroid(vertices);
+	const getCentroid = (vertices: { x: number; y: number }[]) => Utils.getCentroid(vertices);
 
-	const isVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform, bufferSize: number) => 
-		Utils.isVisible(pos, transform, bufferSize);
+	const isVisible = (
+		pos: { x: number; y: number },
+		transform: d3.ZoomTransform,
+		bufferSize: number
+	) => Utils.isVisible(pos, transform, bufferSize);
 
 	const mod12 = (n: number) => Utils.mod12(n);
-	
-	const pitchClass = (q: number, r: number, root = 0) => 
+
+	const pitchClass = (q: number, r: number, root = 0) =>
 		Utils.pitchClass(q, r, root, qInterval, rInterval);
-	
-	const getPitchWithOctave = (q: number, r: number, rootNote: string) => 
-		Utils.getPitchWithOctave(q, r, rootNote, singleOctave, qInterval, rInterval, NOTES, NOTE_TO_SEMITONE);
-	
-	const cartesianToHex = (x: number, y: number) => 
+
+	const getPitchWithOctave = (q: number, r: number, rootNote: string) =>
+		Utils.getPitchWithOctave(
+			q,
+			r,
+			rootNote,
+			singleOctave,
+			qInterval,
+			rInterval,
+			NOTES,
+			NOTE_TO_SEMITONE
+		);
+
+	const cartesianToHex = (x: number, y: number) =>
 		Utils.cartesianToHex(x, y, baseTriangleSize, TRI_HEIGHT);
 
 	// Performance optimization functions
@@ -166,12 +227,18 @@
 	// Coordinate lookup with caching
 	const getNoteCoordsFromCache = (noteName: string): { q: number; r: number } | null => {
 		const cacheKey = Utils.createCacheKey(noteName, currentRootNote, qInterval, rInterval);
-		
+
 		if (coordinateCache.has(cacheKey)) {
 			return coordinateCache.get(cacheKey)!;
 		}
 
-		const coords = Utils.findNoteCoordinates(noteName, currentRootNote, qInterval, rInterval, getPitchWithOctave);
+		const coords = Utils.findNoteCoordinates(
+			noteName,
+			currentRootNote,
+			qInterval,
+			rInterval,
+			getPitchWithOctave
+		);
 		if (coords) {
 			coordinateCache.set(cacheKey, coords);
 		}
@@ -186,16 +253,16 @@
 		if (debouncedChordTimeout) {
 			clearTimeout(debouncedChordTimeout);
 		}
-		
+
 		debouncedChordTimeout = setTimeout(() => {
 			const allNotes = getAllHighlightedNotes();
 			const currentHash = JSON.stringify([...allNotes].sort());
-			
+
 			// Only recalculate if notes have actually changed
 			if (currentHash !== lastSelectedNotesHash) {
 				lastSelectedNotesHash = currentHash;
 				highlightedChordsCache.clear();
-				
+
 				if (allNotes.length >= 3) {
 					const combinations = getTriadCombinations(allNotes);
 					for (const combination of combinations) {
@@ -205,7 +272,7 @@
 						}
 					}
 				}
-				
+
 				// Update highlights after calculation
 				requestAnimationFrame(() => updateHighlightsOnly());
 			}
@@ -215,7 +282,7 @@
 	// Throttled drag update to prevent excessive DOM updates
 	const throttledDragUpdate = () => {
 		if (throttledDragTimeout) return;
-		
+
 		throttledDragTimeout = setTimeout(() => {
 			updateHighlightsOnly();
 			throttledDragTimeout = null;
@@ -391,7 +458,7 @@
 		return false;
 	};
 
-	const isNoteHighlighted = (name: string) => 
+	const isNoteHighlighted = (name: string) =>
 		highlightedNote === name || selectedNotes.has(name) || highlightedPatternNotes.has(name);
 
 	const isScaleHighlighted = (name: string) => highlightedScaleNotes.has(name);
@@ -400,14 +467,14 @@
 		if (highlightedScaleNotes.size === 0) return false;
 		const pos = { x: col * spacing.col, y: row * spacing.row };
 		const vertices = getTriangleVertices(pos, isUp);
-		return vertices.every(v => {
+		return vertices.every((v) => {
 			const { q, r } = cartesianToHex(v.x, v.y);
 			return highlightedScaleNotes.has(getPitchWithOctave(q, r, currentRootNote));
 		});
 	};
 
 	// Get all currently highlighted/selected notes
-	const getAllHighlightedNotes = (): string[] => 
+	const getAllHighlightedNotes = (): string[] =>
 		Utils.getAllHighlightedNotes(highlightedNote, selectedNotes, highlightedPatternNotes);
 
 	// Get all chords that are currently highlighted (formed by selected notes) - optimized with cache
@@ -433,10 +500,10 @@
 
 		const notesToCheck =
 			highlightedPatternNotes.size > 0 ? Array.from(highlightedPatternNotes) : allNotes;
-		
+
 		// Create cache key
 		const cacheKey = `${JSON.stringify([...notesToCheck].sort())}-${currentRootNote}-${qInterval}-${rInterval}`;
-		
+
 		if (coordinatePatternCache.has(cacheKey)) {
 			return coordinatePatternCache.get(cacheKey)!;
 		}
@@ -533,19 +600,27 @@
 	};
 
 	// Generic pattern applier
-	const applyPattern = (pattern: [number, number][], rootNote: string) => 
-		Utils.applyPattern(pattern, rootNote, getNoteCoordsFromCache, getPitchWithOctave, currentRootNote);
+	const applyPattern = (pattern: [number, number][], rootNote: string) =>
+		Utils.applyPattern(
+			pattern,
+			rootNote,
+			getNoteCoordsFromCache,
+			getPitchWithOctave,
+			currentRootNote
+		);
 
 	const applyChordPattern = (patternName: string, rootNote: string) => {
-		const pattern = CONFIG.chordPatterns.presets[patternName as keyof typeof CONFIG.chordPatterns.presets] as [number, number][];
+		const pattern = CONFIG.chordPatterns.presets[
+			patternName as keyof typeof CONFIG.chordPatterns.presets
+		] as [number, number][];
 		if (!pattern) return;
 		selectedChordPattern = patternName;
 		chordPatternRoot = rootNote;
 		highlightedPatternNotes = applyPattern(pattern, rootNote);
-		
+
 		// Trigger chord detection for triangle highlighting
 		debouncedChordCalculation();
-		
+
 		if (gridGroup) throttledDragUpdate();
 	};
 
@@ -563,7 +638,7 @@
 		const modeOffset = CONFIG.modes[modeName as keyof typeof CONFIG.modes];
 		const majorPattern = CONFIG.scales['Major Scale'];
 		if (modeOffset === undefined || !majorPattern) return;
-		
+
 		const shiftedPattern = majorPattern.map(([q, r]) => [q + modeOffset, r] as [number, number]);
 		selectedMode = modeName;
 		selectedScale = null;
@@ -576,12 +651,12 @@
 		selectedChordPattern = null;
 		chordPatternRoot = null;
 		highlightedPatternNotes.clear();
-		
+
 		// Clear chord cache and trigger recalculation
 		highlightedChordsCache.clear();
 		lastSelectedNotesHash = '';
 		debouncedChordCalculation();
-		
+
 		if (gridGroup) updateHighlightsOnly();
 	};
 
@@ -606,7 +681,9 @@
 		if (!svgElement) return;
 
 		// Update triangle highlights using native DOM
-		const triangles = svgElement.querySelectorAll('polygon[data-triangle-type]') as NodeListOf<SVGPolygonElement>;
+		const triangles = svgElement.querySelectorAll(
+			'polygon[data-triangle-type]'
+		) as NodeListOf<SVGPolygonElement>;
 		for (const triangle of triangles) {
 			const triangleType = triangle.getAttribute('data-triangle-type');
 			if (!triangleType) continue;
@@ -637,7 +714,9 @@
 		}
 
 		// Update vertex highlights using native DOM
-		const vertices = svgElement.querySelectorAll('circle[data-note]') as NodeListOf<SVGCircleElement>;
+		const vertices = svgElement.querySelectorAll(
+			'circle[data-note]'
+		) as NodeListOf<SVGCircleElement>;
 		for (const vertex of vertices) {
 			const noteName = vertex.getAttribute('data-note');
 			if (!noteName) continue;
@@ -720,7 +799,7 @@
 	const isTriangleVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform) =>
 		Utils.isTriangleVisible(pos, transform, baseTriangleSize);
 
-	const getVisibleBounds = (transform: d3.ZoomTransform) => 
+	const getVisibleBounds = (transform: d3.ZoomTransform) =>
 		Utils.getVisibleBounds(transform, baseTriangleSize, spacing);
 
 	function createTriangleWithHover(
@@ -871,27 +950,61 @@
 	}
 
 	// Element creation functions
-	const createInnerCircleElement = (parent: d3.Selection<SVGGElement, unknown, null, undefined>, pos: { x: number; y: number }) =>
-		parent.append('circle').attr('cx', pos.x).attr('cy', pos.y).attr('r', CONFIG.innerCircle.diameter / 2)
-			.attr('fill', CONFIG.innerCircle.fillColor).attr('stroke', CONFIG.innerCircle.strokeColor)
-			.attr('stroke-width', CONFIG.innerCircle.strokeWidth).attr('opacity', CONFIG.innerCircle.opacity)
+	const createInnerCircleElement = (
+		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
+		pos: { x: number; y: number }
+	) =>
+		parent
+			.append('circle')
+			.attr('cx', pos.x)
+			.attr('cy', pos.y)
+			.attr('r', CONFIG.innerCircle.diameter / 2)
+			.attr('fill', CONFIG.innerCircle.fillColor)
+			.attr('stroke', CONFIG.innerCircle.strokeColor)
+			.attr('stroke-width', CONFIG.innerCircle.strokeWidth)
+			.attr('opacity', CONFIG.innerCircle.opacity)
 			.style('pointer-events', 'none');
 
-	const createVertexLabel = (parent: d3.Selection<SVGGElement, unknown, null, undefined>, pos: { x: number; y: number }, label: string) =>
-		parent.append('text').attr('x', pos.x).attr('y', pos.y).attr('text-anchor', 'middle').attr('dominant-baseline', 'middle')
-			.attr('font-size', CONFIG.vertexLabel.fontSize).attr('font-family', CONFIG.vertexLabel.fontFamily)
-			.attr('fill', CONFIG.vertexLabel.color).style('pointer-events', 'none').text(label);
+	const createVertexLabel = (
+		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
+		pos: { x: number; y: number },
+		label: string
+	) =>
+		parent
+			.append('text')
+			.attr('x', pos.x)
+			.attr('y', pos.y)
+			.attr('text-anchor', 'middle')
+			.attr('dominant-baseline', 'middle')
+			.attr('font-size', CONFIG.vertexLabel.fontSize)
+			.attr('font-family', CONFIG.vertexLabel.fontFamily)
+			.attr('fill', CONFIG.vertexLabel.color)
+			.style('pointer-events', 'none')
+			.text(label);
 
-	const createLabel = (parent: d3.Selection<SVGGElement, unknown, null, undefined>, gridPos: { x: number; y: number }, gridUp: boolean, title: string, subtitle: string) => {
+	const createLabel = (
+		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
+		gridPos: { x: number; y: number },
+		gridUp: boolean,
+		title: string,
+		subtitle: string
+	) => {
 		const center = getCentroid(getTriangleVertices(gridPos, gridUp));
 		[
 			{ text: title, y: center.y - CONFIG.label.spacing / 2, config: CONFIG.label.title },
 			{ text: subtitle, y: center.y + CONFIG.label.spacing / 2, config: CONFIG.label.subtitle }
-		].forEach(({ text, y, config }) => 
-			parent.append('text').attr('x', center.x).attr('y', y).attr('text-anchor', 'middle')
-				.attr('dominant-baseline', 'middle').attr('font-size', config.fontSize)
-				.attr('font-family', config.fontFamily).attr('fill', config.color)
-				.style('pointer-events', 'none').text(text)
+		].forEach(({ text, y, config }) =>
+			parent
+				.append('text')
+				.attr('x', center.x)
+				.attr('y', y)
+				.attr('text-anchor', 'middle')
+				.attr('dominant-baseline', 'middle')
+				.attr('font-size', config.fontSize)
+				.attr('font-family', config.fontFamily)
+				.attr('fill', config.color)
+				.style('pointer-events', 'none')
+				.text(text)
 		);
 	};
 </script>
@@ -913,6 +1026,7 @@
 	bind:currentTonnetzName
 	bind:qInterval
 	bind:rInterval
+	bind:midiFile
 	{getHighlightedChords}
 	{getCoordinatePattern}
 	{getCoordinateForNote}
@@ -928,4 +1042,3 @@
 <div bind:this={container} class="tonnetz-container">
 	<!-- SVG will be appended here by D3 -->
 </div>
-

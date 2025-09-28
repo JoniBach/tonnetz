@@ -148,6 +148,23 @@
 	export let applyScale;
 	export let applyMode;
 	export let clearScale;
+	export let midiFile;
+
+	let fileInput;
+
+	function handleFileInputChange(event) {
+		const file = event.target.files[0];
+		if (file) {
+			const reader = new FileReader();
+			reader.onload = (e) => {
+				const arrayBuffer = e.target.result;
+				const midiData = new Uint8Array(arrayBuffer);
+
+				midiFile = midiData;
+			};
+			reader.readAsArrayBuffer(file);
+		}
+	}
 </script>
 
 <div class="control-panel">
@@ -191,6 +208,15 @@
 	<!-- Audio Status -->
 	<div class="control-row audio-status">
 		<span>🔊 Audio: {isPlaying ? 'Playing' : 'Ready'}</span>
+	</div>
+
+	<div class="control-row">
+		<div class="file-input">
+			<input type="file" id="file" accept=".mid" on:change={handleFileInputChange} />
+			<label for="file" class="file-label"
+				>{fileInput ? fileInput.files[0].name : 'No file selected'}</label
+			>
+		</div>
 	</div>
 
 	<!-- Audio Settings -->
