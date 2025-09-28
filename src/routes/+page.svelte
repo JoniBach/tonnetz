@@ -6,41 +6,40 @@
 	import * as Utils from './utils.js';
 	import ControlPanel from './ControlPanel.svelte';
 	import './tonnetz.css';
+	import { createTonnetzSystem } from './tonnetzSystem.js';
 
 	let container: HTMLDivElement;
 	let svg: d3.Selection<SVGSVGElement, unknown, null, undefined>;
 	let gridGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
 	let midiFile: Uint8Array | null = null;
 
-	// Derived constants
-	const { halfSize, triHeight, spacing, scale } = createGeometryConstants(CONFIG);
-	// const { halfSize, triHeight, spacing, scale } = createGeometryConstants(CONFIG);
+	const geometryConstants = createGeometryConstants(CONFIG);
 
-	// State variables
-	let currentRootNote = CONFIG.music.rootNote,
-		showMusicalLabels = true,
-		singleOctave = CONFIG.music.singleOctave,
-		currentTonnetzName = CONFIG.tonnetz.name,
-		qInterval = CONFIG.tonnetz.qInterval,
-		rInterval = CONFIG.tonnetz.rInterval,
-		highlightedNote: string | null = null,
-		isDragging = false,
-		isShiftPressed = false,
-		selectedNotes = new Set<string>(),
-		selectedChordPattern: string | null = null,
-		chordPatternRoot: string | null = null,
-		highlightedPatternNotes = new Set<string>(),
-		selectedScale: string | null = null,
-		selectedMode: string | null = null,
-		scaleRoot: string | null = null,
-		highlightedScaleNotes = new Set<string>(),
-		// Performance caches
-		coordinateCache = new Map<string, { q: number; r: number }>(),
-		coordinatePatternCache = new Map<string, string>(),
-		highlightedChordsCache = new Set<string>(),
-		lastSelectedNotesHash = '',
-		debouncedChordTimeout: ReturnType<typeof setTimeout> | null = null,
-		throttledDragTimeout: ReturnType<typeof setTimeout> | null = null;
+	let tonnetzSystem = createTonnetzSystem(CONFIG);
+
+	let currentRootNote = tonnetzSystem.currentRootNote,
+		showMusicalLabels = tonnetzSystem.showMusicalLabels,
+		singleOctave = tonnetzSystem.singleOctave,
+		currentTonnetzName = tonnetzSystem.currentTonnetzName,
+		qInterval = tonnetzSystem.qInterval,
+		rInterval = tonnetzSystem.rInterval,
+		highlightedNote = tonnetzSystem.highlightedNote,
+		isDragging = tonnetzSystem.isDragging,
+		isShiftPressed = tonnetzSystem.isShiftPressed,
+		selectedNotes = tonnetzSystem.selectedNotes,
+		selectedChordPattern = tonnetzSystem.selectedChordPattern,
+		chordPatternRoot = tonnetzSystem.chordPatternRoot,
+		highlightedPatternNotes = tonnetzSystem.highlightedPatternNotes,
+		selectedScale = tonnetzSystem.selectedScale,
+		selectedMode = tonnetzSystem.selectedMode,
+		scaleRoot = tonnetzSystem.scaleRoot,
+		highlightedScaleNotes = tonnetzSystem.highlightedScaleNotes,
+		coordinateCache = tonnetzSystem.coordinateCache,
+		coordinatePatternCache = tonnetzSystem.coordinatePatternCache,
+		highlightedChordsCache = tonnetzSystem.highlightedChordsCache,
+		lastSelectedNotesHash = tonnetzSystem.lastSelectedNotesHash,
+		debouncedChordTimeout = tonnetzSystem.debouncedChordTimeout,
+		throttledDragTimeout = tonnetzSystem.throttledDragTimeout;
 
 	function handleMidiFileChange(event) {
 		const file = event.target.files[0];
@@ -173,8 +172,14 @@
 			.zoom()
 			.scaleExtent([1 / config.zoomRange, config.zoomRange])
 			.translateExtent([
-				[-(config.gridExtent * spacing.col) / 2, -(config.gridExtent * spacing.row) / 2],
-				[(config.gridExtent * spacing.col) / 2, (config.gridExtent * spacing.row) / 2]
+				[
+					-(config.gridExtent * geometryConstants.spacing.col) / 2,
+					-(config.gridExtent * geometryConstants.spacing.row) / 2
+				],
+				[
+					(config.gridExtent * geometryConstants.spacing.col) / 2,
+					(config.gridExtent * geometryConstants.spacing.row) / 2
+				]
 			])
 			.filter((e: any) => e.button === 2 || e.type === 'wheel' || e.type === 'dblclick')
 			.on('zoom', (e: d3.D3ZoomEvent<SVGSVGElement, unknown>) => {
@@ -188,7 +193,7 @@
 
 	// Wrapper functions that inject dependencies into pure functions
 	const getTriangleVertices = (pos: { x: number; y: number }, up: boolean) =>
-		Utils.getTriangleVertices(pos, up, halfSize, triHeight);
+		Utils.getTriangleVertices(pos, up, geometryConstants.halfSize, geometryConstants.triHeight);
 
 	const getCentroid = (vertices: { x: number; y: number }[]) => Utils.getCentroid(vertices);
 
@@ -216,7 +221,7 @@
 		);
 
 	const cartesianToHex = (x: number, y: number) =>
-		Utils.cartesianToHex(x, y, CONFIG.baseTriangleSize, triHeight);
+		Utils.cartesianToHex(x, y, CONFIG.baseTriangleSize, geometryConstants.triHeight);
 
 	// Performance optimization functions
 	const clearCaches = () => {
@@ -293,7 +298,7 @@
 
 	// Optimized chord detection with major/minor distinction
 	function getTriangleChord(row: number, col: number, isUp: boolean): string {
-		const pos = { x: col * spacing.col, y: row * spacing.row };
+		const pos = { x: col * geometryConstants.spacing.col, y: row * geometryConstants.spacing.row };
 		const vertices = getTriangleVertices(pos, isUp);
 		const pitchClasses = vertices.map((v) => {
 			const { q, r } = cartesianToHex(v.x, v.y);
@@ -393,7 +398,10 @@
 			for (let col = -5; col <= 5; col++) {
 				const isUp = (row + col) % 2 === 0;
 				if (getTriangleType(row, col, isUp) === chordType) {
-					const pos = { x: col * spacing.col, y: row * spacing.row };
+					const pos = {
+						x: col * geometryConstants.spacing.col,
+						y: row * geometryConstants.spacing.row
+					};
 					const vertices = getTriangleVertices(pos, isUp);
 					return vertices.map((v) => {
 						const { q, r } = cartesianToHex(v.x, v.y);
@@ -413,7 +421,10 @@
 		for (let row = -10; row <= 10; row++) {
 			for (let col = -10; col <= 10; col++) {
 				const isUp = (row + col) % 2 === 0;
-				const pos = { x: col * spacing.col, y: row * spacing.row };
+				const pos = {
+					x: col * geometryConstants.spacing.col,
+					y: row * geometryConstants.spacing.row
+				};
 				const vertices = getTriangleVertices(pos, isUp);
 				const triangleNotes = vertices.map((v) => {
 					const { q, r } = cartesianToHex(v.x, v.y);
@@ -467,7 +478,7 @@
 
 	const isTriangleScaleHighlighted = (row: number, col: number, isUp: boolean) => {
 		if (highlightedScaleNotes.size === 0) return false;
-		const pos = { x: col * spacing.col, y: row * spacing.row };
+		const pos = { x: col * geometryConstants.spacing.col, y: row * geometryConstants.spacing.row };
 		const vertices = getTriangleVertices(pos, isUp);
 		return vertices.every((v) => {
 			const { q, r } = cartesianToHex(v.x, v.y);
@@ -761,7 +772,10 @@
 		// Collect data
 		for (let row = viewBounds.minRow; row <= viewBounds.maxRow; row++) {
 			for (let col = viewBounds.minCol; col <= viewBounds.maxCol; col++) {
-				const pos = { x: col * spacing.col, y: row * spacing.row };
+				const pos = {
+					x: col * geometryConstants.spacing.col,
+					y: row * geometryConstants.spacing.row
+				};
 				const isUp = (row + col) % 2 === 0;
 
 				triangleData.push({ pos, isUp, row, col });
@@ -802,7 +816,7 @@
 		Utils.isTriangleVisible(pos, transform, CONFIG.baseTriangleSize);
 
 	const getVisibleBounds = (transform: d3.ZoomTransform) =>
-		Utils.getVisibleBounds(transform, CONFIG.baseTriangleSize, spacing);
+		Utils.getVisibleBounds(transform, CONFIG.baseTriangleSize, geometryConstants.spacing);
 
 	function createTriangleWithHover(
 		triangleParent: d3.Selection<SVGGElement, unknown, null, undefined>,
@@ -872,8 +886,8 @@
 		const vertices = getTriangleVertices(gridPos, gridUp);
 		const center = getCentroid(vertices);
 		const innerVertices = vertices.map((vertex) => ({
-			x: center.x + (vertex.x - center.x) * scale,
-			y: center.y + (vertex.y - center.y) * scale
+			x: center.x + (vertex.x - center.x) * geometryConstants.scale,
+			y: center.y + (vertex.y - center.y) * geometryConstants.scale
 		}));
 
 		return parent

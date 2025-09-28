@@ -1,0 +1,53 @@
+export const createTonnetzSystem = (config) => {
+	return {
+		currentRootNote: config.music.rootNote,
+		showMusicalLabels: true,
+		singleOctave: config.music.singleOctave,
+		currentTonnetzName: config.tonnetz.name,
+		qInterval: config.tonnetz.qInterval,
+		rInterval: config.tonnetz.rInterval,
+		highlightedNote: null,
+		isDragging: false,
+		isShiftPressed: false,
+		selectedNotes: new Set<string>(),
+		selectedChordPattern: null,
+		chordPatternRoot: null,
+		highlightedPatternNotes: new Set<string>(),
+		selectedScale: null,
+		selectedMode: null,
+		scaleRoot: null,
+		highlightedScaleNotes: new Set<string>(),
+		// Performance caches
+		coordinateCache: new Map<string, { q: number; r: number }>(),
+		coordinatePatternCache: new Map<string, string>(),
+		highlightedChordsCache: new Set<string>(),
+		lastSelectedNotesHash: '',
+		debouncedChordTimeout: null,
+		throttledDragTimeout: null
+	};
+};
+
+// let currentRootNote = CONFIG.music.rootNote,
+// 	showMusicalLabels = true,
+// 	singleOctave = CONFIG.music.singleOctave,
+// 	currentTonnetzName = CONFIG.tonnetz.name,
+// 	qInterval = CONFIG.tonnetz.qInterval,
+// 	rInterval = CONFIG.tonnetz.rInterval,
+// 	highlightedNote: string | null = null,
+// 	isDragging = false,
+// 	isShiftPressed = false,
+// 	selectedNotes = new Set<string>(),
+// 	selectedChordPattern: string | null = null,
+// 	chordPatternRoot: string | null = null,
+// 	highlightedPatternNotes = new Set<string>(),
+// 	selectedScale: string | null = null,
+// 	selectedMode: string | null = null,
+// 	scaleRoot: string | null = null,
+// 	highlightedScaleNotes = new Set<string>(),
+// 	// Performance caches
+// 	coordinateCache = new Map<string, { q: number; r: number }>(),
+// 	coordinatePatternCache = new Map<string, string>(),
+// 	highlightedChordsCache = new Set<string>(),
+// 	lastSelectedNotesHash = '',
+// 	debouncedChordTimeout: ReturnType<typeof setTimeout> | null = null,
+// 	throttledDragTimeout: ReturnType<typeof setTimeout> | null = null;
