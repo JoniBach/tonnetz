@@ -7,6 +7,7 @@
 	import ControlPanel from './ControlPanel.svelte';
 	import './tonnetz.css';
 	import { createTonnetzSystem } from './tonnetzSystem.js';
+	import { EventSystem } from './tonnetzSystem.js';
 
 	let container: HTMLDivElement;
 	let svg: d3.Selection<SVGSVGElement, unknown, null, undefined>;
@@ -14,6 +15,7 @@
 	let midiFile: Uint8Array | null = null;
 
 	const geometryConstants = createGeometryConstants(CONFIG);
+	const eventSystem = EventSystem.getInstance();
 
 	let {
 		currentRootNote,
@@ -38,63 +40,69 @@
 		highlightedChordsCache,
 		lastSelectedNotesHash,
 		debouncedChordTimeout,
-		throttledDragTimeout
+		throttledDragTimeout,
+		setupEventListeners,
+		cleanup,
+		handleMouseDown,
+		handleGlobalMouseUp,
+		handleKeyDown,
+		handleKeyUp
 	} = createTonnetzSystem(CONFIG);
 
-	$: if (!isDragging) {
-		// Handle MIDI file changes
-		if (midiFile) {
-			console.log('MIDI file loaded:', midiFile);
-		}
+	// $: if (!isDragging) {
+	// 	// Handle MIDI file changes
+	// 	if (midiFile) {
+	// 		console.log('MIDI file loaded:', midiFile);
+	// 	}
 
-		// Only proceed with updates if we have an SVG context
-		if (svg) {
-			// Update viewport when relevant state changes
-			if (
-				/*state*/ currentRootNote !== undefined ||
-				/*state*/ showMusicalLabels !== undefined ||
-				/*state*/ singleOctave !== undefined ||
-				/*state*/ qInterval ||
-				/*state*/ rInterval
-			) {
-				updateViewport(currentTransform);
-			}
+	// 	// Only proceed with updates if we have an SVG context
+	// 	if (svg) {
+	// 		// Update viewport when relevant state changes
+	// 		if (
+	// 			/*state*/ currentRootNote !== undefined ||
+	// 			/*state*/ showMusicalLabels !== undefined ||
+	// 			/*state*/ singleOctave !== undefined ||
+	// 			/*state*/ qInterval ||
+	// 			/*state*/ rInterval
+	// 		) {
+	// 			updateViewport(currentTransform);
+	// 		}
 
-			// Only update highlights if we have a grid group
-			if (gridGroup) {
-				const shouldUpdateHighlights =
-					/*state*/ highlightedNote !== null ||
-					/*state*/ selectedNotes.size > 0 ||
-					/*state*/ selectedScale ||
-					/*state*/ selectedMode ||
-					/*state*/ highlightedPatternNotes.size > 0;
+	// 		// Only update highlights if we have a grid group
+	// 		if (gridGroup) {
+	// 			const shouldUpdateHighlights =
+	// 				/*state*/ highlightedNote !== null ||
+	// 				/*state*/ selectedNotes.size > 0 ||
+	// 				/*state*/ selectedScale ||
+	// 				/*state*/ selectedMode ||
+	// 				/*state*/ highlightedPatternNotes.size > 0;
 
-				if (shouldUpdateHighlights) {
-					requestAnimationFrame(() => updateHighlightsOnly());
-				}
-			}
-		}
+	// 			if (shouldUpdateHighlights) {
+	// 				requestAnimationFrame(() => updateHighlightsOnly());
+	// 			}
+	// 		}
+	// 	}
 
-		// Clear caches when root note changes
-		if (/*state*/ currentRootNote) {
-			clearCaches();
-		}
+	// 	// Clear caches when root note changes
+	// 	if (/*state*/ currentRootNote) {
+	// 		clearCaches();
+	// 	}
 
-		// Update CSS custom properties (only when container exists)
-		if (container) {
-			const { color, strokeWidth, fillOpacity, transitionDuration, easing } = CONFIG.highlight;
-			const [r, g, b] = [color.slice(1, 3), color.slice(3, 5), color.slice(5, 7)].map((x) =>
-				parseInt(x, 16)
-			);
-			Object.assign(container.style, {
-				'--highlight-color-value': color,
-				'--highlight-stroke-width-value': strokeWidth.toString(),
-				'--highlight-fill-value': `rgba(${r}, ${g}, ${b}, ${fillOpacity})`,
-				'--highlight-transition-duration-value': `${transitionDuration}s`,
-				'--highlight-easing-value': easing
-			});
-		}
-	}
+	// 	// Update CSS custom properties (only when container exists)
+	// 	if (container) {
+	// 		const { color, strokeWidth, fillOpacity, transitionDuration, easing } = CONFIG.highlight;
+	// 		const [r, g, b] = [color.slice(1, 3), color.slice(3, 5), color.slice(5, 7)].map((x) =>
+	// 			parseInt(x, 16)
+	// 		);
+	// 		Object.assign(container.style, {
+	// 			'--highlight-color-value': color,
+	// 			'--highlight-stroke-width-value': strokeWidth.toString(),
+	// 			'--highlight-fill-value': `rgba(${r}, ${g}, ${b}, ${fillOpacity})`,
+	// 			'--highlight-transition-duration-value': `${transitionDuration}s`,
+	// 			'--highlight-easing-value': easing
+	// 		});
+	// 	}
+	// }
 
 	function initTonnetz() {
 		const [width, height] = [window.innerWidth, window.innerHeight];
@@ -165,7 +173,23 @@
 	}
 
 	onMount(() => {
+		// Initialize SVG and grid
 		initTonnetz();
+
+		// Set up event listeners
+		const cleanupListeners = setupEventListeners(container, svg.node()!);
+
+		// Set up view updates
+		const unsubscribeUpdate = eventSystem.on('UPDATE_VIEW', () => {
+			updateViewport(currentTransform);
+			updateHighlights();
+		});
+
+		return () => {
+			cleanupListeners();
+			cleanup();
+			unsubscribeUpdate();
+		};
 	});
 
 	const createZoomBehavior = (config) =>
