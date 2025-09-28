@@ -13,34 +13,33 @@
 	let midiFile: Uint8Array | null = null;
 
 	// Derived constants
-	const { baseTriangleSize, gridExtent, innerTriangle } = CONFIG;
-	const { HALF_SIZE, TRI_HEIGHT, spacing, scale } = createGeometryConstants(CONFIG);
+	const { halfSize, triHeight, spacing, scale } = createGeometryConstants(CONFIG);
+	// const { halfSize, triHeight, spacing, scale } = createGeometryConstants(CONFIG);
 
 	// State variables
 	let currentRootNote = CONFIG.music.rootNote,
 		showMusicalLabels = true,
-		singleOctave = CONFIG.music.singleOctave;
-	let currentTonnetzName = CONFIG.tonnetz.name,
+		singleOctave = CONFIG.music.singleOctave,
+		currentTonnetzName = CONFIG.tonnetz.name,
 		qInterval = CONFIG.tonnetz.qInterval,
-		rInterval = CONFIG.tonnetz.rInterval;
-	let highlightedNote: string | null = null,
+		rInterval = CONFIG.tonnetz.rInterval,
+		highlightedNote: string | null = null,
 		isDragging = false,
-		isShiftPressed = false;
-	let selectedNotes = new Set<string>(),
+		isShiftPressed = false,
+		selectedNotes = new Set<string>(),
 		selectedChordPattern: string | null = null,
-		chordPatternRoot: string | null = null;
-	let highlightedPatternNotes = new Set<string>(),
+		chordPatternRoot: string | null = null,
+		highlightedPatternNotes = new Set<string>(),
 		selectedScale: string | null = null,
-		selectedMode: string | null = null;
-	let scaleRoot: string | null = null,
-		highlightedScaleNotes = new Set<string>();
-
-	// Performance caches
-	let coordinateCache = new Map<string, { q: number; r: number }>(),
-		coordinatePatternCache = new Map<string, string>();
-	let highlightedChordsCache = new Set<string>(),
-		lastSelectedNotesHash = '';
-	let debouncedChordTimeout: ReturnType<typeof setTimeout> | null = null,
+		selectedMode: string | null = null,
+		scaleRoot: string | null = null,
+		highlightedScaleNotes = new Set<string>(),
+		// Performance caches
+		coordinateCache = new Map<string, { q: number; r: number }>(),
+		coordinatePatternCache = new Map<string, string>(),
+		highlightedChordsCache = new Set<string>(),
+		lastSelectedNotesHash = '',
+		debouncedChordTimeout: ReturnType<typeof setTimeout> | null = null,
 		throttledDragTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	function handleMidiFileChange(event) {
@@ -98,9 +97,9 @@
 		});
 	}
 
-	onMount(() => {
+	function initTonnetz() {
 		const [width, height] = [window.innerWidth, window.innerHeight];
-		const zoom = createZoomBehavior();
+		const zoom = createZoomBehavior(CONFIG);
 
 		svg = d3
 			.select(container)
@@ -164,15 +163,18 @@
 			window.removeEventListener('keydown', handleKeyDown);
 			window.removeEventListener('keyup', handleKeyUp);
 		};
+	}
+	onMount(() => {
+		initTonnetz();
 	});
 
-	const createZoomBehavior = () =>
+	const createZoomBehavior = (config) =>
 		d3
 			.zoom()
-			.scaleExtent([1 / CONFIG.zoomRange, CONFIG.zoomRange])
+			.scaleExtent([1 / config.zoomRange, config.zoomRange])
 			.translateExtent([
-				[-(gridExtent * spacing.col) / 2, -(gridExtent * spacing.row) / 2],
-				[(gridExtent * spacing.col) / 2, (gridExtent * spacing.row) / 2]
+				[-(config.gridExtent * spacing.col) / 2, -(config.gridExtent * spacing.row) / 2],
+				[(config.gridExtent * spacing.col) / 2, (config.gridExtent * spacing.row) / 2]
 			])
 			.filter((e: any) => e.button === 2 || e.type === 'wheel' || e.type === 'dblclick')
 			.on('zoom', (e: d3.D3ZoomEvent<SVGSVGElement, unknown>) => {
@@ -186,7 +188,7 @@
 
 	// Wrapper functions that inject dependencies into pure functions
 	const getTriangleVertices = (pos: { x: number; y: number }, up: boolean) =>
-		Utils.getTriangleVertices(pos, up, HALF_SIZE, TRI_HEIGHT);
+		Utils.getTriangleVertices(pos, up, halfSize, triHeight);
 
 	const getCentroid = (vertices: { x: number; y: number }[]) => Utils.getCentroid(vertices);
 
@@ -214,7 +216,7 @@
 		);
 
 	const cartesianToHex = (x: number, y: number) =>
-		Utils.cartesianToHex(x, y, baseTriangleSize, TRI_HEIGHT);
+		Utils.cartesianToHex(x, y, CONFIG.baseTriangleSize, triHeight);
 
 	// Performance optimization functions
 	const clearCaches = () => {
@@ -797,10 +799,10 @@
 
 	// Visibility functions
 	const isTriangleVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform) =>
-		Utils.isTriangleVisible(pos, transform, baseTriangleSize);
+		Utils.isTriangleVisible(pos, transform, CONFIG.baseTriangleSize);
 
 	const getVisibleBounds = (transform: d3.ZoomTransform) =>
-		Utils.getVisibleBounds(transform, baseTriangleSize, spacing);
+		Utils.getVisibleBounds(transform, CONFIG.baseTriangleSize, spacing);
 
 	function createTriangleWithHover(
 		triangleParent: d3.Selection<SVGGElement, unknown, null, undefined>,
