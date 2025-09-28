@@ -47,62 +47,7 @@
 		handleGlobalMouseUp,
 		handleKeyDown,
 		handleKeyUp
-	} = createTonnetzSystem(CONFIG);
-
-	// $: if (!isDragging) {
-	// 	// Handle MIDI file changes
-	// 	if (midiFile) {
-	// 		console.log('MIDI file loaded:', midiFile);
-	// 	}
-
-	// 	// Only proceed with updates if we have an SVG context
-	// 	if (svg) {
-	// 		// Update viewport when relevant state changes
-	// 		if (
-	// 			/*state*/ currentRootNote !== undefined ||
-	// 			/*state*/ showMusicalLabels !== undefined ||
-	// 			/*state*/ singleOctave !== undefined ||
-	// 			/*state*/ qInterval ||
-	// 			/*state*/ rInterval
-	// 		) {
-	// 			updateViewport(currentTransform);
-	// 		}
-
-	// 		// Only update highlights if we have a grid group
-	// 		if (gridGroup) {
-	// 			const shouldUpdateHighlights =
-	// 				/*state*/ highlightedNote !== null ||
-	// 				/*state*/ selectedNotes.size > 0 ||
-	// 				/*state*/ selectedScale ||
-	// 				/*state*/ selectedMode ||
-	// 				/*state*/ highlightedPatternNotes.size > 0;
-
-	// 			if (shouldUpdateHighlights) {
-	// 				requestAnimationFrame(() => updateHighlightsOnly());
-	// 			}
-	// 		}
-	// 	}
-
-	// 	// Clear caches when root note changes
-	// 	if (/*state*/ currentRootNote) {
-	// 		clearCaches();
-	// 	}
-
-	// 	// Update CSS custom properties (only when container exists)
-	// 	if (container) {
-	// 		const { color, strokeWidth, fillOpacity, transitionDuration, easing } = CONFIG.highlight;
-	// 		const [r, g, b] = [color.slice(1, 3), color.slice(3, 5), color.slice(5, 7)].map((x) =>
-	// 			parseInt(x, 16)
-	// 		);
-	// 		Object.assign(container.style, {
-	// 			'--highlight-color-value': color,
-	// 			'--highlight-stroke-width-value': strokeWidth.toString(),
-	// 			'--highlight-fill-value': `rgba(${r}, ${g}, ${b}, ${fillOpacity})`,
-	// 			'--highlight-transition-duration-value': `${transitionDuration}s`,
-	// 			'--highlight-easing-value': easing
-	// 		});
-	// 	}
-	// }
+	} = $state(createTonnetzSystem(CONFIG));
 
 	function initTonnetz() {
 		const [width, height] = [window.innerWidth, window.innerHeight];
@@ -120,25 +65,18 @@
 			.style('-ms-user-select', 'none')
 			.call(zoom)
 			.on('contextmenu', (e: Event) => e.preventDefault())
+			// Replace the existing mouseup handler with:
 			.on('mouseup', (event: MouseEvent) => {
-				const wasDragging = /*state*/ isDragging;
-				/*state*/ isDragging = false;
+				const wasDragging = isDragging;
+				isDragging = false;
 
-				// Clear selections after dragging ends (unless shift is pressed for multi-select)
-				if (wasDragging && !(/*state*/ isShiftPressed)) {
-					/*state*/ highlightedNote = null;
-					/*state*/ selectedNotes.clear();
-					/*state*/ selectedNotes = new Set(/*state*/ selectedNotes); // Trigger reactivity
-
-					// Immediately clear chord cache when clearing selections
-					/*state*/ highlightedChordsCache.clear();
-					/*state*/ lastSelectedNotesHash = '';
-				}
-
-				// Force update to ensure scale/mode highlights persist
-				if (gridGroup && /*state*/ (selectedScale || /*state*/ selectedMode)) {
-					updateHighlightsOnly();
-				}
+				// Emit the mouse up event
+				eventSystem.emit('MOUSE_UP', {
+					x: event.clientX,
+					y: event.clientY,
+					wasDragging,
+					shiftKey: event.shiftKey
+				});
 			});
 
 		gridGroup = svg.append('g');
@@ -171,7 +109,6 @@
 			window.removeEventListener('keyup', handleKeyUp);
 		};
 	}
-
 	onMount(() => {
 		// Initialize SVG and grid
 		initTonnetz();
@@ -179,21 +116,72 @@
 		// Set up event listeners
 		const cleanupListeners = setupEventListeners(container, svg.node()!);
 
-		// Set up view updates
-		const unsubscribeUpdate = eventSystem.on('UPDATE_VIEW', () => {
-			updateViewport(currentTransform);
-			updateHighlights();
+		// Handle mouse up events
+		const unsubscribeMouseUp = eventSystem.on('MOUSE_UP', (data) => {
+			// Stop all playing notes
+
+			if (data.wasDragging && !data.shiftKey) {
+				highlightedNote = null;
+				selectedNotes = new Set<string>();
+				highlightedChordsCache.clear();
+				lastSelectedNotesHash = '';
+				eventSystem.emit('STATE_UPDATE');
+			}
+
+			// Update highlights if needed
+			if (gridGroup && (selectedScale || selectedMode)) {
+				updateHighlightsOnly();
+			}
 		});
 
+		// Handle state updates
+		const unsubscribeStateUpdate = eventSystem.on('STATE_UPDATE', () => {
+			updateViewport(currentTransform);
+			updateHighlightsOnly();
+		});
+
+		// Handle window resize
+		const handleResize = () => {
+			const [width, height] = [window.innerWidth, window.innerHeight];
+			if (svg) {
+				svg.attr('width', width).attr('height', height);
+				eventSystem.emit('RESIZE', { width, height });
+			}
+		};
+
+		// Add global mouse up handler to catch mouse up outside the SVG
+		const handleGlobalMouseUp = () => {
+			console.log('up');
+			isDragging = false;
+		};
+		window.addEventListener('mouseup', handleGlobalMouseUp);
+
+		// Add mouse leave handler
+		svg.on('mouseleave', () => {
+			isDragging = false;
+		});
+
+		// Initial resize
+		handleResize();
+		window.addEventListener('resize', handleResize);
+
+		// Cleanup function
 		return () => {
+			// Cleanup all event listeners
 			cleanupListeners();
+			unsubscribeMouseUp();
+			unsubscribeStateUpdate();
+			window.removeEventListener('resize', handleResize);
+			window.removeEventListener('mouseup', handleGlobalMouseUp);
+			svg.on('mouseleave', null);
+
+			// Cleanup any other resources
 			cleanup();
-			unsubscribeUpdate();
 		};
 	});
 
-	const createZoomBehavior = (config) =>
-		d3
+	const createZoomBehavior = (config) => {
+		return d3
 			.zoom()
 			.scaleExtent([1 / config.zoomRange, config.zoomRange])
 			.translateExtent([
@@ -209,9 +197,10 @@
 			.filter((e: any) => e.button === 2 || e.type === 'wheel' || e.type === 'dblclick')
 			.on('zoom', (e: d3.D3ZoomEvent<SVGSVGElement, unknown>) => {
 				gridGroup.attr('transform', e.transform);
-				clearTimeout(viewportUpdateTimeout);
-				viewportUpdateTimeout = setTimeout(() => updateViewport(e.transform), 100);
+				currentTransform = e.transform;
+				eventSystem.emit('ZOOM', { transform: e.transform });
 			});
+	};
 
 	let viewportUpdateTimeout: ReturnType<typeof setTimeout>;
 	let currentTransform: d3.ZoomTransform = d3.zoomIdentity;
@@ -247,14 +236,6 @@
 
 	const cartesianToHex = (x: number, y: number) =>
 		Utils.cartesianToHex(x, y, CONFIG.baseTriangleSize, geometryConstants.triHeight);
-
-	// Performance optimization functions
-	const clearCaches = () => {
-		/*state*/ coordinateCache.clear();
-		/*state*/ coordinatePatternCache.clear();
-		/*state*/ highlightedChordsCache.clear();
-		/*state*/ lastSelectedNotesHash = '';
-	};
 
 	// Coordinate lookup with caching
 	const getNoteCoordsFromCache = (noteName: string): { q: number; r: number } | null => {
@@ -393,6 +374,7 @@
 			/*state*/ highlightedNote = null;
 		} else {
 			// Normal single selection: clear everything and select chord notes
+			console.log(selectedNotes);
 			/*state*/ highlightedNote = null;
 			/*state*/ selectedNotes.clear();
 			chordNotes.forEach((note) => /*state*/ selectedNotes.add(note));
@@ -411,6 +393,7 @@
 			/*state*/ selectedNotes = new Set(/*state*/ selectedNotes);
 			/*state*/ highlightedNote = null;
 		} else {
+			console.log(selectedNotes);
 			/*state*/ highlightedNote = name;
 			/*state*/ selectedNotes.clear();
 		}
@@ -911,6 +894,7 @@
 				const triangleType = getTriangleType(row, col, up);
 				highlightChord(triangleType);
 			})
+
 			.on('mouseenter', () => {
 				if (/*state*/ isDragging && !(/*state*/ isShiftPressed)) {
 					// Highlight during drag (only in normal mode, not multi-select) with throttling
@@ -1075,18 +1059,18 @@
 		);
 	};
 
-	function handleMidiFileChange(event) {
-		const file = event.target.files[0];
-		if (file) {
-			const reader = new FileReader();
-			reader.onload = (e) => {
-				const arrayBuffer = e.target.result;
-				const uint8Array = new Uint8Array(arrayBuffer);
-				midiFile = uint8Array;
-			};
-			reader.readAsArrayBuffer(file);
-		}
-	}
+	// function handleMidiFileChange(event) {
+	// 	const file = event.target.files[0];
+	// 	if (file) {
+	// 		const reader = new FileReader();
+	// 		reader.onload = (e) => {
+	// 			const arrayBuffer = e.target.result;
+	// 			const uint8Array = new Uint8Array(arrayBuffer);
+	// 			midiFile = uint8Array;
+	// 		};
+	// 		reader.readAsArrayBuffer(file);
+	// 	}
+	// }
 </script>
 
 <!-- Control Panel -->

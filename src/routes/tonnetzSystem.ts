@@ -4,6 +4,11 @@ import * as d3 from 'd3';
 type EventHandler<T = any> = (data: T) => void;
 type EventHandlers = Map<string, Set<EventHandler>>;
 
+// Add these at the top of the file, outside createTonnetzSystem
+let audioContext: AudioContext | null = null;
+const activeOscillators = new Set<OscillatorNode>();
+const activeAudioBuffers = new Set<AudioBufferSourceNode>();
+
 class EventSystem {
 	private handlers: EventHandlers = new Map();
 	private static instance: EventSystem;
@@ -150,9 +155,17 @@ export const createTonnetzSystem = (config) => {
 
 		// Cleanup
 		cleanup: () => {
-			if (debouncedChordTimeout) clearTimeout(debouncedChordTimeout);
-			if (throttledDragTimeout) clearTimeout(throttledDragTimeout);
-			eventSystem.clear();
+			// Stop all audio
+			if (typeof Tone !== 'undefined') {
+				Tone.Transport.cancel();
+				if (window.audioManager) {
+					window.audioManager.stop();
+				}
+			}
+
+			// Clear any timeouts
+			if (state.debouncedChordTimeout) clearTimeout(state.debouncedChordTimeout);
+			if (state.throttledDragTimeout) clearTimeout(state.throttledDragTimeout);
 		}
 	};
 
