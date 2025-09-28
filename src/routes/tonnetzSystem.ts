@@ -93,7 +93,6 @@ export const createTonnetzSystem = (config) => {
 		// Event handlers
 		handleMouseDown: (event: MouseEvent) => {
 			if (event.button !== 0) return;
-			state.isDragging = true;
 			eventSystem.emit('MOUSE_DOWN', {
 				x: event.clientX,
 				y: event.clientY,

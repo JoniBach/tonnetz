@@ -42,11 +42,11 @@
 		debouncedChordTimeout,
 		throttledDragTimeout,
 		setupEventListeners,
-		cleanup,
-		handleMouseDown,
-		handleGlobalMouseUp,
-		handleKeyDown,
-		handleKeyUp
+		cleanup
+		// handleMouseDown,
+		// handleGlobalMouseUp,
+		// handleKeyDown,
+		// handleKeyUp
 	} = $state(createTonnetzSystem(CONFIG));
 
 	function initTonnetz() {
@@ -151,15 +151,9 @@
 
 		// Add global mouse up handler to catch mouse up outside the SVG
 		const handleGlobalMouseUp = () => {
-			console.log('up');
 			isDragging = false;
 		};
 		window.addEventListener('mouseup', handleGlobalMouseUp);
-
-		// Add mouse leave handler
-		svg.on('mouseleave', () => {
-			isDragging = false;
-		});
 
 		// Initial resize
 		handleResize();
@@ -173,8 +167,6 @@
 			unsubscribeStateUpdate();
 			window.removeEventListener('resize', handleResize);
 			window.removeEventListener('mouseup', handleGlobalMouseUp);
-			svg.on('mouseleave', null);
-
 			// Cleanup any other resources
 			cleanup();
 		};
@@ -199,6 +191,9 @@
 				gridGroup.attr('transform', e.transform);
 				currentTransform = e.transform;
 				eventSystem.emit('ZOOM', { transform: e.transform });
+			})
+			.on('end', () => {
+				eventSystem.emit('STATE_UPDATE');
 			});
 	};
 
@@ -374,7 +369,6 @@
 			/*state*/ highlightedNote = null;
 		} else {
 			// Normal single selection: clear everything and select chord notes
-			console.log(selectedNotes);
 			/*state*/ highlightedNote = null;
 			/*state*/ selectedNotes.clear();
 			chordNotes.forEach((note) => /*state*/ selectedNotes.add(note));
@@ -393,7 +387,6 @@
 			/*state*/ selectedNotes = new Set(/*state*/ selectedNotes);
 			/*state*/ highlightedNote = null;
 		} else {
-			console.log(selectedNotes);
 			/*state*/ highlightedNote = name;
 			/*state*/ selectedNotes.clear();
 		}
@@ -844,6 +837,90 @@
 			createVertexLabel(vertexLabels, pos, label);
 		});
 	}
+	function handleMouseDown(
+		event: MouseEvent,
+		type: 'note' | 'chord',
+		data: {
+			// For chords
+			row?: number;
+			col?: number;
+			up?: boolean;
+			// For notes
+			x?: number;
+			y?: number;
+			rootNote?: string;
+		}
+	) {
+		if (event.button !== 0) return;
+		event.preventDefault();
+		isDragging = true;
+
+		if (type === 'chord') {
+			const { row, col, up } = data;
+			if (row === undefined || col === undefined || up === undefined) return;
+
+			const triangleType = getTriangleType(row, col, up);
+			highlightChord(triangleType);
+		} else if (type === 'note') {
+			const { x, y, rootNote } = data;
+			if (x === undefined || y === undefined || !rootNote) return;
+
+			const { q, r } = cartesianToHex(x, y);
+			const noteName = getPitchWithOctave(q, r, rootNote);
+
+			if (isShiftPressed) {
+				// Toggle note in selection
+				if (selectedNotes.has(noteName)) {
+					selectedNotes.delete(noteName);
+				} else {
+					selectedNotes.add(noteName);
+				}
+				selectedNotes = new Set(selectedNotes);
+				highlightedNote = null;
+			} else if (selectedChordPattern) {
+				applyChordPattern(selectedChordPattern, noteName);
+			} else {
+				highlightedNote = noteName;
+				selectedNotes.clear();
+			}
+			debouncedChordCalculation();
+		}
+	}
+	function handleOnMouseEnter({
+		row,
+		col,
+		up,
+		element,
+		parent,
+		pos,
+		type,
+		onDrag
+	}: HandleHoverParams) {
+		if (isDragging && !isShiftPressed && onDrag) {
+			onDrag();
+			throttledDragUpdate();
+		}
+
+		if (!element) {
+			element =
+				type === 'triangle'
+					? createInnerTriangleElement(parent, pos, up as boolean)
+					: createInnerCircleElement(parent, pos);
+		}
+		return element;
+	}
+
+	function handleOnMouseLeave({
+		element
+	}: {
+		element: d3.Selection<SVGElement, unknown, null, undefined> | null;
+	}) {
+		if (element) {
+			element.remove();
+			element = null;
+		}
+		return element;
+	}
 
 	// Visibility functions
 	const isTriangleVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform) =>
@@ -880,36 +957,44 @@
 			.classed('scale-highlight', () => {
 				return isTriangleScaleHighlighted(row, col, up);
 			})
-			.on('mouseleave', () => {
-				if (innerTriangleElement) {
-					innerTriangleElement.remove();
-					innerTriangleElement = null;
-				}
-			})
+
 			.on('mousedown', (event: MouseEvent) => {
-				if (event.button !== 0) return; // Only respond to left-click
-				event.preventDefault();
-				// Removed stopPropagation to allow global mouseup handler to work
-				/*state*/ isDragging = true;
-				const triangleType = getTriangleType(row, col, up);
-				highlightChord(triangleType);
+				handleMouseDown(event, 'chord', { row, col, up });
 			})
 
 			.on('mouseenter', () => {
-				if (/*state*/ isDragging && !(/*state*/ isShiftPressed)) {
-					// Highlight during drag (only in normal mode, not multi-select) with throttling
-					const triangleType = getTriangleType(row, col, up);
-					// Select the triangle's notes instead of highlighting chord directly
-					highlightChord(triangleType);
-					// Use throttled update for smooth performance
-					throttledDragUpdate();
-				}
-				if (!innerTriangleElement) {
-					innerTriangleElement = createInnerTriangleElement(innerTriangleParent, pos, up);
-				}
+				innerTriangleElement = handleOnMouseEnter({
+					row,
+					col,
+					up,
+					element: innerTriangleElement,
+					parent: innerTriangleParent,
+					pos,
+					type: 'triangle',
+					onDrag: () => {
+						const triangleType = getTriangleType(row, col, up);
+						highlightChord(triangleType);
+					}
+				});
+			})
+			.on('mouseleave', () => {
+				innerTriangleElement = handleOnMouseLeave({ element: innerTriangleElement });
 			});
 
 		return vertices;
+	}
+
+	type ElementType = 'triangle' | 'circle';
+
+	interface HandleHoverParams {
+		row?: number;
+		col?: number;
+		up?: boolean;
+		element: d3.Selection<SVGElement, unknown, null, undefined> | null;
+		parent: d3.Selection<SVGGElement, unknown, null, undefined>;
+		pos: { x: number; y: number };
+		type: ElementType;
+		onDrag?: () => void;
 	}
 
 	// Optimized inner triangle creation
@@ -964,39 +1049,30 @@
 				const noteName = getPitchWithOctave(q, r, /*state*/ currentRootNote);
 				return isScaleHighlighted(noteName);
 			})
-			.on('mouseleave', () => {
-				if (innerCircleElement) {
-					innerCircleElement.remove();
-					innerCircleElement = null;
-				}
-			})
-			.on('mousedown', (event: MouseEvent) => {
-				if (event.button !== 0) return; // Only respond to left-click
-				event.preventDefault();
-				// Removed stopPropagation to allow global mouseup handler to work
-				/*state*/ isDragging = true;
-				const { q, r } = cartesianToHex(pos.x, pos.y);
-				const noteName = getPitchWithOctave(q, r, /*state*/ currentRootNote);
 
-				// If chord pattern is selected, apply it to this note
-				if (/*state*/ selectedChordPattern) {
-					applyChordPattern(/*state*/ selectedChordPattern, noteName);
-				} else {
-					highlightNote(noteName);
-				}
+			// Update the mousedown handler for notes
+			.on('mousedown', (event: MouseEvent) => {
+				handleMouseDown(event, 'note', {
+					x: pos.x,
+					y: pos.y,
+					rootNote: currentRootNote
+				});
 			})
 			.on('mouseenter', () => {
-				if (/*state*/ isDragging && !(/*state*/ isShiftPressed)) {
-					// Highlight during drag (only in normal mode, not multi-select) with throttling
-					const { q, r } = cartesianToHex(pos.x, pos.y);
-					const noteName = getPitchWithOctave(q, r, /*state*/ currentRootNote);
-					/*state*/ highlightedNote = noteName;
-					// Use throttled update for smooth performance
-					throttledDragUpdate();
-				}
-				if (!innerCircleElement) {
-					innerCircleElement = createInnerCircleElement(innerCircleParent, pos);
-				}
+				innerCircleElement = handleOnMouseEnter({
+					element: innerCircleElement,
+					parent: innerCircleParent,
+					pos,
+					type: 'circle',
+					onDrag: () => {
+						const { q, r } = cartesianToHex(pos.x, pos.y);
+						const noteName = getPitchWithOctave(q, r, currentRootNote);
+						highlightNote(noteName);
+					}
+				});
+			})
+			.on('mouseleave', () => {
+				innerCircleElement = handleOnMouseLeave({ element: innerCircleElement });
 			});
 	}
 
