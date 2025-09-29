@@ -19,8 +19,14 @@
 
 	let tonnetzSystemState = $state(createTonnetzSystem(CONFIG));
 
+	// Global mouse up handler
+	function handleGlobalMouseUp() {
+		tonnetzSystemState.isDragging = false;
+	}
+
 	function initTonnetz() {
-		const [width, height] = [window.innerWidth, window.innerHeight];
+		let width = window.innerWidth;
+		let height = window.innerHeight;
 		const zoom = createZoomBehavior(CONFIG);
 
 		svg = d3
@@ -34,9 +40,11 @@
 			.style('-moz-user-select', 'none')
 			.style('-ms-user-select', 'none')
 			.call(zoom)
-			.on('contextmenu', (e: Event) => e.preventDefault())
+			.on('contextmenu', function (e: Event) {
+				return e.preventDefault();
+			})
 			// Replace the existing mouseup handler with:
-			.on('mouseup', (event: MouseEvent) => {
+			.on('mouseup', function (event: MouseEvent) {
 				eventSystem.emit('MOUSE_UP', {
 					x: event.clientX,
 					y: event.clientY,
@@ -49,33 +57,57 @@
 		svg.call(zoom.transform, d3.zoomIdentity.translate(width / 2, height / 2));
 		createGrid();
 
+		// Window resize handler
+		function handleResize() {
+			if (!svg) return;
+
+			// Get new dimensions
+			const containerElement = svg.node()?.parentElement;
+			if (!containerElement) return;
+
+			const newWidth = containerElement.clientWidth;
+			const newHeight = containerElement.clientHeight;
+
+			// Update SVG dimensions
+			svg.attr('width', newWidth).attr('height', newHeight);
+
+			// Update viewport with current transform
+			if (currentTransform) {
+				updateViewport(currentTransform);
+			}
+		}
+
 		// Keyboard event listeners for shift key
-		const handleKeyDown = (e: KeyboardEvent) => {
+		function handleKeyDown(e: KeyboardEvent) {
 			if (e.key === 'Shift') {
 				tonnetzSystemState.isShiftPressed = true;
 			}
-		};
+		}
 
-		const handleKeyUp = (e: KeyboardEvent) => {
+		function handleKeyUp(e: KeyboardEvent) {
 			if (e.key === 'Shift') {
 				tonnetzSystemState.isShiftPressed = false;
 			}
-		};
+		}
 
-		const handleResize = () =>
-			svg.attr('width', window.innerWidth).attr('height', window.innerHeight);
-
+		// Add event listeners
 		window.addEventListener('resize', handleResize);
 		window.addEventListener('keydown', handleKeyDown);
 		window.addEventListener('keyup', handleKeyUp);
+		window.addEventListener('mouseup', handleGlobalMouseUp);
 
-		return () => {
+		// Cleanup function
+		const cleanup = function () {
 			window.removeEventListener('resize', handleResize);
 			window.removeEventListener('keydown', handleKeyDown);
 			window.removeEventListener('keyup', handleKeyUp);
+			window.removeEventListener('mouseup', handleGlobalMouseUp);
+			// Clean up any other resources if needed
 		};
+
+		return cleanup;
 	}
-	onMount(() => {
+	onMount(function () {
 		// Initialize SVG and grid
 		initTonnetz();
 
@@ -83,7 +115,7 @@
 		const cleanupListeners = tonnetzSystemState.setupEventListeners(container, svg.node()!);
 
 		// Handle mouse up events
-		const unsubscribeMouseUp = eventSystem.on('MOUSE_UP', (data) => {
+		const unsubscribeMouseUp = eventSystem.on('MOUSE_UP', function (data) {
 			// Stop all playing notes
 
 			if (data.wasDragging && !data.shiftKey) {
@@ -101,13 +133,13 @@
 		});
 
 		// Handle state updates
-		const unsubscribeStateUpdate = eventSystem.on('STATE_UPDATE', () => {
+		const unsubscribeStateUpdate = eventSystem.on('STATE_UPDATE', function () {
 			updateViewport(currentTransform);
 			updateHighlightsOnly();
 		});
 
 		// Handle window resize
-		const handleResize = () => {
+		const handleResize = function () {
 			const [width, height] = [window.innerWidth, window.innerHeight];
 			if (svg) {
 				svg.attr('width', width).attr('height', height);
@@ -116,7 +148,7 @@
 		};
 
 		// Add global mouse up handler to catch mouse up outside the SVG
-		const handleGlobalMouseUp = () => {
+		const handleGlobalMouseUp = function () {
 			tonnetzSystemState.isDragging = false;
 		};
 		window.addEventListener('mouseup', handleGlobalMouseUp);
@@ -126,7 +158,7 @@
 		window.addEventListener('resize', handleResize);
 
 		// Cleanup function
-		return () => {
+		return function () {
 			// Cleanup all event listeners
 			cleanupListeners();
 			unsubscribeMouseUp();
@@ -138,7 +170,7 @@
 		};
 	});
 
-	const createZoomBehavior = (config: any) => {
+	function createZoomBehavior(config: any) {
 		return d3
 			.zoom()
 			.scaleExtent([1 / config.zoomRange, config.zoomRange])
@@ -152,39 +184,54 @@
 					(config.gridExtent * geometryConstants.spacing.row) / 2
 				]
 			])
-			.filter((e: any) => e.button === 2 || e.type === 'wheel' || e.type === 'dblclick')
-			.on('zoom', (e: d3.D3ZoomEvent<SVGSVGElement, unknown>) => {
+			.filter(function (e: any) {
+				return e.button === 2 || e.type === 'wheel' || e.type === 'dblclick';
+			})
+			.on('zoom', function (e: d3.D3ZoomEvent<SVGSVGElement, unknown>) {
 				gridGroup.attr('transform', e.transform);
 				currentTransform = e.transform;
 				eventSystem.emit('ZOOM', { transform: e.transform });
 			})
-			.on('end', () => {
+			.on('end', function () {
 				eventSystem.emit('STATE_UPDATE');
 			});
-	};
+	}
 
 	let viewportUpdateTimeout: ReturnType<typeof setTimeout>;
 	let currentTransform: d3.ZoomTransform = d3.zoomIdentity;
 
 	// Wrapper functions that inject dependencies into pure functions
-	const getTriangleVertices = (pos: { x: number; y: number }, up: boolean) =>
-		Utils.getTriangleVertices(pos, up, geometryConstants.halfSize, geometryConstants.triHeight);
+	function getTriangleVertices(pos: { x: number; y: number }, up: boolean) {
+		return Utils.getTriangleVertices(
+			pos,
+			up,
+			geometryConstants.halfSize,
+			geometryConstants.triHeight
+		);
+	}
 
-	const getCentroid = (vertices: { x: number; y: number }[]) => Utils.getCentroid(vertices);
+	function getCentroid(vertices: { x: number; y: number }[]) {
+		return Utils.getCentroid(vertices);
+	}
 
-	const isVisible = (
+	function isVisible(
 		pos: { x: number; y: number },
 		transform: d3.ZoomTransform,
 		bufferSize: number
-	) => Utils.isVisible(pos, transform, bufferSize);
+	) {
+		return Utils.isVisible(pos, transform, bufferSize);
+	}
 
-	const mod12 = (n: number) => Utils.mod12(n);
+	function mod12(n: number) {
+		return Utils.mod12(n);
+	}
 
-	const pitchClass = (q: number, r: number, root = 0) =>
-		Utils.pitchClass(q, r, root, tonnetzSystemState.qInterval, tonnetzSystemState.rInterval);
+	function pitchClass(q: number, r: number, root = 0) {
+		return Utils.pitchClass(q, r, root, tonnetzSystemState.qInterval, tonnetzSystemState.rInterval);
+	}
 
-	const getPitchWithOctave = (q: number, r: number, rootNote: string) =>
-		Utils.getPitchWithOctave(
+	function getPitchWithOctave(q: number, r: number, rootNote: string) {
+		return Utils.getPitchWithOctave(
 			q,
 			r,
 			rootNote,
@@ -194,12 +241,14 @@
 			NOTES,
 			NOTE_TO_SEMITONE
 		);
+	}
 
-	const cartesianToHex = (x: number, y: number) =>
-		Utils.cartesianToHex(x, y, CONFIG.baseTriangleSize, geometryConstants.triHeight);
+	function cartesianToHex(x: number, y: number) {
+		return Utils.cartesianToHex(x, y, CONFIG.baseTriangleSize, geometryConstants.triHeight);
+	}
 
 	// Coordinate lookup with caching
-	const getNoteCoordsFromCache = (noteName: string): { q: number; r: number } | null => {
+	const getNoteCoordsFromCache = function (noteName: string) {
 		const cacheKey = Utils.createCacheKey(
 			noteName,
 			tonnetzSystemState.currentRootNote,
@@ -225,15 +274,17 @@
 	};
 
 	// Triad combination generator
-	const getTriadCombinations = (arr: string[]): string[][] => Utils.getTriadCombinations(arr);
+	const getTriadCombinations = function (arr: string[]) {
+		return Utils.getTriadCombinations(arr);
+	};
 
 	// Debounced chord calculation to prevent excessive computation
-	const debouncedChordCalculation = () => {
+	const debouncedChordCalculation = function () {
 		if (tonnetzSystemState.debouncedChordTimeout) {
 			clearTimeout(tonnetzSystemState.debouncedChordTimeout);
 		}
 
-		tonnetzSystemState.debouncedChordTimeout = setTimeout(() => {
+		tonnetzSystemState.debouncedChordTimeout = setTimeout(function () {
 			const allNotes = getAllHighlightedNotes();
 			const currentHash = JSON.stringify([...allNotes].sort());
 
@@ -253,16 +304,18 @@
 				}
 
 				// Update highlights after calculation
-				requestAnimationFrame(() => updateHighlightsOnly());
+				requestAnimationFrame(function () {
+					return updateHighlightsOnly();
+				});
 			}
 		}, 16); // ~60fps throttle
 	};
 
 	// Throttled drag update to prevent excessive DOM updates
-	const throttledDragUpdate = () => {
+	const throttledDragUpdate = function () {
 		if (tonnetzSystemState.throttledDragTimeout) return;
 
-		tonnetzSystemState.throttledDragTimeout = setTimeout(() => {
+		tonnetzSystemState.throttledDragTimeout = setTimeout(function () {
 			updateHighlightsOnly();
 			tonnetzSystemState.throttledDragTimeout = null;
 		}, 16); // ~60fps throttle
@@ -272,7 +325,7 @@
 	function getTriangleChord(row: number, col: number, isUp: boolean): string {
 		const pos = { x: col * geometryConstants.spacing.col, y: row * geometryConstants.spacing.row };
 		const vertices = getTriangleVertices(pos, isUp);
-		const pitchClasses = vertices.map((v) => {
+		const pitchClasses = vertices.map(function (v) {
 			const { q, r } = cartesianToHex(v.x, v.y);
 			const fullPitch = pitchClass(q, r, NOTE_TO_SEMITONE[tonnetzSystemState.currentRootNote]);
 			return mod12(fullPitch); // Always use mod12 for chord detection
@@ -281,9 +334,15 @@
 		// Check each note as potential root
 		for (const [i, root] of pitchClasses.entries()) {
 			const intervals = pitchClasses
-				.filter((_, idx) => idx !== i)
-				.map((note) => mod12(note - root))
-				.sort((a, b) => a - b);
+				.filter(function (_, idx) {
+					return idx !== i;
+				})
+				.map(function (note) {
+					return mod12(note - root);
+				})
+				.sort(function (a, b) {
+					return a - b;
+				});
 
 			if (intervals.length === 2) {
 				if (intervals[0] === 4 && intervals[1] === 7) return `${NOTES[root]}`; // Major triad
@@ -302,7 +361,7 @@
 	}
 
 	// Utility functions
-	const changeTonnetzPreset = (presetName: string) => {
+	const changeTonnetzPreset = function (presetName: string) {
 		const preset = CONFIG.tonnetz.presets[presetName as keyof typeof CONFIG.tonnetz.presets];
 		if (preset) {
 			tonnetzSystemState.currentTonnetzName = presetName;
@@ -311,24 +370,31 @@
 		}
 	};
 
-	const getIntervalDescription = (semitones: number) =>
-		INTERVAL_NAMES[semitones] || `${semitones} semitones`;
+	function getIntervalDescription(semitones: number) {
+		return INTERVAL_NAMES[semitones] || `${semitones} semitones`;
+	}
 
 	// Highlight functions - simplified to work with notes only
-	const highlightChord = (chordType: string) => {
+	const highlightChord = function (chordType: string) {
 		// Get the notes that make up this chord
 		const chordNotes = getChordNotes(chordType);
 
 		if (tonnetzSystemState.isShiftPressed) {
 			// Toggle selection: if all notes are selected, deselect them; otherwise select all
-			const allSelected = chordNotes.every((note) => tonnetzSystemState.selectedNotes.has(note));
+			const allSelected = chordNotes.every(function (note) {
+				return tonnetzSystemState.selectedNotes.has(note);
+			});
 
 			if (allSelected) {
 				// Deselect all chord notes
-				chordNotes.forEach((note) => tonnetzSystemState.selectedNotes.delete(note));
+				chordNotes.forEach(function (note) {
+					return tonnetzSystemState.selectedNotes.delete(note);
+				});
 			} else {
 				// Select all chord notes
-				chordNotes.forEach((note) => tonnetzSystemState.selectedNotes.add(note));
+				chordNotes.forEach(function (note) {
+					return tonnetzSystemState.selectedNotes.add(note);
+				});
 			}
 			tonnetzSystemState.selectedNotes = new Set(tonnetzSystemState.selectedNotes); // Trigger reactivity
 			// Clear single note highlight when using multi-select
@@ -337,7 +403,9 @@
 			// Normal single selection: clear everything and select chord notes
 			tonnetzSystemState.highlightedNote = null;
 			tonnetzSystemState.selectedNotes.clear();
-			chordNotes.forEach((note) => tonnetzSystemState.selectedNotes.add(note));
+			chordNotes.forEach(function (note) {
+				return tonnetzSystemState.selectedNotes.add(note);
+			});
 			tonnetzSystemState.selectedNotes = new Set(tonnetzSystemState.selectedNotes); // Trigger reactivity
 		}
 
@@ -345,7 +413,7 @@
 		debouncedChordCalculation();
 	};
 
-	const highlightNote = (name: string) => {
+	const highlightNote = function (name: string) {
 		if (tonnetzSystemState.isShiftPressed) {
 			tonnetzSystemState.selectedNotes.has(name)
 				? tonnetzSystemState.selectedNotes.delete(name)
@@ -360,7 +428,7 @@
 	};
 
 	// Get notes that make up a chord
-	const getChordNotes = (chordType: string): string[] => {
+	const getChordNotes = function (chordType: string) {
 		if (!chordType || chordType === 'null') return [];
 
 		// Parse chord type (e.g., "C-up" or "F#-down")
@@ -377,7 +445,7 @@
 						y: row * geometryConstants.spacing.row
 					};
 					const vertices = getTriangleVertices(pos, isUp);
-					return vertices.map((v) => {
+					return vertices.map(function (v) {
 						const { q, r } = cartesianToHex(v.x, v.y);
 						return getPitchWithOctave(q, r, tonnetzSystemState.currentRootNote);
 					});
@@ -388,7 +456,7 @@
 	};
 
 	// Get chord type from a set of notes
-	const getChordFromNotes = (notes: string[]): string | null => {
+	const getChordFromNotes = function (notes: string[]) {
 		if (notes.length !== 3) return null;
 
 		// Search for triangles that contain exactly these 3 notes
@@ -400,7 +468,7 @@
 					y: row * geometryConstants.spacing.row
 				};
 				const vertices = getTriangleVertices(pos, isUp);
-				const triangleNotes = vertices.map((v) => {
+				const triangleNotes = vertices.map(function (v) {
 					const { q, r } = cartesianToHex(v.x, v.y);
 					return getPitchWithOctave(q, r, tonnetzSystemState.currentRootNote);
 				});
@@ -418,13 +486,16 @@
 	};
 
 	// Legacy function kept for compatibility - redirects to optimized version
-	const getCombinations = (arr: string[], size: number): string[][] => {
+	const getCombinations = function (arr: string[], size: number) {
 		if (size === 3) {
 			return getTriadCombinations(arr);
 		}
 		// Fallback for other sizes (rarely used)
 		if (size > arr.length) return [];
-		if (size === 1) return arr.map((item) => [item]);
+		if (size === 1)
+			return arr.map(function (item) {
+				return [item];
+			});
 		if (size === arr.length) return [arr];
 
 		const result: string[][] = [];
@@ -438,26 +509,31 @@
 		return result;
 	};
 
-	const isChordHighlighted = (name: string) => {
+	function isChordHighlighted(name: string) {
 		if (tonnetzSystemState.highlightedChordsCache.has(name)) return true;
 		const allNotes = getAllHighlightedNotes();
 		if (allNotes.length >= 3 && tonnetzSystemState.highlightedChordsCache.size === 0)
 			debouncedChordCalculation();
 		return false;
-	};
+	}
 
-	const isNoteHighlighted = (name: string) =>
-		tonnetzSystemState.highlightedNote === name ||
-		tonnetzSystemState.selectedNotes.has(name) ||
-		tonnetzSystemState.highlightedPatternNotes.has(name);
+	function isNoteHighlighted(name: string) {
+		return (
+			tonnetzSystemState.highlightedNote === name ||
+			tonnetzSystemState.selectedNotes.has(name) ||
+			tonnetzSystemState.highlightedPatternNotes.has(name)
+		);
+	}
 
-	const isScaleHighlighted = (name: string) => tonnetzSystemState.highlightedScaleNotes.has(name);
+	function isScaleHighlighted(name: string) {
+		return tonnetzSystemState.highlightedScaleNotes.has(name);
+	}
 
-	const isTriangleScaleHighlighted = (row: number, col: number, isUp: boolean) => {
+	const isTriangleScaleHighlighted = function (row: number, col: number, isUp: boolean) {
 		if (tonnetzSystemState.highlightedScaleNotes.size === 0) return false;
 		const pos = { x: col * geometryConstants.spacing.col, y: row * geometryConstants.spacing.row };
 		const vertices = getTriangleVertices(pos, isUp);
-		return vertices.every((v) => {
+		return vertices.every(function (v) {
 			const { q, r } = cartesianToHex(v.x, v.y);
 			return tonnetzSystemState.highlightedScaleNotes.has(
 				getPitchWithOctave(q, r, tonnetzSystemState.currentRootNote)
@@ -466,15 +542,16 @@
 	};
 
 	// Get all currently highlighted/selected notes
-	const getAllHighlightedNotes = (): string[] =>
-		Utils.getAllHighlightedNotes(
+	function getAllHighlightedNotes(): string[] {
+		return Utils.getAllHighlightedNotes(
 			tonnetzSystemState.highlightedNote,
 			tonnetzSystemState.selectedNotes,
 			tonnetzSystemState.highlightedPatternNotes
 		);
+	}
 
 	// Get all chords that are currently highlighted (formed by selected notes) - optimized with cache
-	const getHighlightedChords = (): string[] => {
+	const getHighlightedChords = function () {
 		// Use cached results for better performance
 		if (tonnetzSystemState.highlightedChordsCache.size > 0) {
 			return Array.from(tonnetzSystemState.highlightedChordsCache);
@@ -490,7 +567,7 @@
 	};
 
 	// Get coordinate pattern from selected notes - optimized with caching
-	const getCoordinatePattern = (): string => {
+	const getCoordinatePattern = function () {
 		const allNotes = getAllHighlightedNotes();
 		if (allNotes.length === 0 && tonnetzSystemState.highlightedPatternNotes.size === 0) return '';
 
@@ -522,7 +599,9 @@
 		let rootCoords: { q: number; r: number } | null = null;
 
 		// First try to find (0,0) as root
-		const zeroZero = noteCoords.find((nc) => nc.q === 0 && nc.r === 0);
+		const zeroZero = noteCoords.find(function (nc) {
+			return nc.q === 0 && nc.r === 0;
+		});
 		if (zeroZero) {
 			rootCoords = { q: 0, r: 0 };
 		} else {
@@ -537,7 +616,9 @@
 		}
 
 		// Sort coordinates for consistent display
-		coordinates.sort((a, b) => (a[0] === b[0] ? a[1] - b[1] : a[0] - b[0]));
+		coordinates.sort(function (a, b) {
+			return a[0] === b[0] ? a[1] - b[1] : a[0] - b[0];
+		});
 
 		const result = JSON.stringify(coordinates);
 		tonnetzSystemState.coordinatePatternCache.set(cacheKey, result);
@@ -545,7 +626,7 @@
 	};
 
 	// Get coordinate for a single note - optimized with caching
-	const getCoordinateForNote = (noteName: string): string => {
+	const getCoordinateForNote = function (noteName: string) {
 		const coords = getNoteCoordsFromCache(noteName);
 		if (coords) {
 			return `(${coords.q},${coords.r})`;
@@ -554,7 +635,7 @@
 	};
 
 	// Get coordinate representation for a chord
-	const getChordCoordinates = (chordType: string): string => {
+	const getChordCoordinates = function (chordType: string) {
 		const chordNotes = getChordNotes(chordType);
 		if (chordNotes.length === 0) return 'Unknown chord';
 
@@ -576,7 +657,9 @@
 
 		// Find root note: use (0,0) if it exists, otherwise use the first note
 		let rootCoords: { q: number; r: number } | null = null;
-		const zeroZero = noteCoords.find((nc) => nc.q === 0 && nc.r === 0);
+		const zeroZero = noteCoords.find(function (nc) {
+			return nc.q === 0 && nc.r === 0;
+		});
 		if (zeroZero) {
 			rootCoords = { q: 0, r: 0 };
 		} else if (noteCoords.length > 0) {
@@ -592,22 +675,25 @@
 		}
 
 		// Sort coordinates for consistent display
-		coordinates.sort((a, b) => (a[0] === b[0] ? a[1] - b[1] : a[0] - b[0]));
+		coordinates.sort(function (a, b) {
+			return a[0] === b[0] ? a[1] - b[1] : a[0] - b[0];
+		});
 
 		return JSON.stringify(coordinates);
 	};
 
 	// Generic pattern applier
-	const applyPattern = (pattern: [number, number][], rootNote: string) =>
-		Utils.applyPattern(
+	function applyPattern(pattern: [number, number][], rootNote: string) {
+		return Utils.applyPattern(
 			pattern,
 			rootNote,
 			getNoteCoordsFromCache,
 			getPitchWithOctave,
 			tonnetzSystemState.currentRootNote
 		);
+	}
 
-	const applyChordPattern = (patternName: string, rootNote: string) => {
+	const applyChordPattern = function (patternName: string, rootNote: string) {
 		const pattern = CONFIG.chordPatterns.presets[
 			patternName as keyof typeof CONFIG.chordPatterns.presets
 		] as [number, number][];
@@ -622,7 +708,7 @@
 		if (gridGroup) throttledDragUpdate();
 	};
 
-	const applyScale = (scaleName: string, rootNote: string) => {
+	const applyScale = function (scaleName: string, rootNote: string) {
 		const pattern = CONFIG.scales[scaleName as keyof typeof CONFIG.scales] as [number, number][];
 		if (!pattern?.length) return;
 		tonnetzSystemState.selectedScale = scaleName;
@@ -632,12 +718,14 @@
 		if (gridGroup) throttledDragUpdate();
 	};
 
-	const applyMode = (modeName: string, rootNote: string) => {
+	const applyMode = function (modeName: string, rootNote: string) {
 		const modeOffset = CONFIG.modes[modeName as keyof typeof CONFIG.modes];
 		const majorPattern = CONFIG.scales['Major Scale'];
 		if (modeOffset === undefined || !majorPattern) return;
 
-		const shiftedPattern = majorPattern.map(([q, r]) => [q + modeOffset, r] as [number, number]);
+		const shiftedPattern = majorPattern.map(function ([q, r]) {
+			return [q + modeOffset, r] as [number, number];
+		});
 		tonnetzSystemState.selectedMode = modeName;
 		tonnetzSystemState.selectedScale = null;
 		tonnetzSystemState.scaleRoot = rootNote;
@@ -645,7 +733,7 @@
 		if (gridGroup) throttledDragUpdate();
 	};
 
-	const clearChordPattern = () => {
+	const clearChordPattern = function () {
 		tonnetzSystemState.selectedChordPattern = null;
 		tonnetzSystemState.chordPatternRoot = null;
 		tonnetzSystemState.highlightedPatternNotes.clear();
@@ -658,7 +746,7 @@
 		if (gridGroup) updateHighlightsOnly();
 	};
 
-	const clearScale = () => {
+	const clearScale = function () {
 		tonnetzSystemState.selectedScale = null;
 		tonnetzSystemState.selectedMode = null;
 		tonnetzSystemState.scaleRoot = null;
@@ -695,13 +783,13 @@
 			if (tonnetzSystemState.highlightedScaleNotes.size > 0) {
 				const points = triangle.getAttribute('points');
 				if (points) {
-					const coords = points.split(' ').map((point: string) => {
+					const coords = points.split(' ').map(function (point: string) {
 						const [x, y] = point.split(',').map(Number);
 						return { x, y };
 					});
 
 					// Check if ALL vertices are in the scale
-					isScaleHighlight = coords.every((coord) => {
+					isScaleHighlight = coords.every(function (coord) {
 						const { q, r } = cartesianToHex(coord.x, coord.y);
 						const noteName = getPitchWithOctave(q, r, tonnetzSystemState.currentRootNote);
 						return tonnetzSystemState.highlightedScaleNotes.has(noteName);
@@ -741,7 +829,9 @@
 			'inner-circles',
 			'labels',
 			'vertex-labels'
-		].map((cls) => gridGroup.append('g').attr('class', cls));
+		].map(function (cls) {
+			return gridGroup.append('g').attr('class', cls);
+		});
 		const [triangles, vertices, innerTriangles, innerCircles, labels, vertexLabels] = groups;
 
 		const uniqueVertices = new Set<string>();
@@ -766,7 +856,7 @@
 				triangleData.push({ pos, isUp, row, col });
 
 				// Collect unique vertices
-				getTriangleVertices(pos, isUp).forEach((v) => {
+				getTriangleVertices(pos, isUp).forEach(function (v) {
 					const key = `${v.x.toFixed(1)},${v.y.toFixed(1)}`;
 					if (!uniqueVertices.has(key)) {
 						uniqueVertices.add(key);
@@ -781,7 +871,7 @@
 		}
 
 		// Create elements
-		triangleData.forEach(({ pos, isUp, row, col }) => {
+		triangleData.forEach(function ({ pos, isUp, row, col }) {
 			createTriangleBase(triangles, innerTriangles, pos, isUp, row, col);
 			if (isTriangleVisible(pos, transform)) {
 				const info = tonnetzSystemState.showMusicalLabels
@@ -798,7 +888,7 @@
 			}
 		});
 
-		vertexData.forEach(({ pos, label }) => {
+		vertexData.forEach(function ({ pos, label }) {
 			createCircleBase(vertices, innerCircles, pos);
 			createVertexLabel(vertexLabels, pos, label);
 		});
@@ -890,11 +980,13 @@
 	}
 
 	// Visibility functions
-	const isTriangleVisible = (pos: { x: number; y: number }, transform: d3.ZoomTransform) =>
-		Utils.isTriangleVisible(pos, transform, CONFIG.baseTriangleSize);
+	function isTriangleVisible(pos: { x: number; y: number }, transform: d3.ZoomTransform) {
+		return Utils.isTriangleVisible(pos, transform, CONFIG.baseTriangleSize);
+	}
 
-	const getVisibleBounds = (transform: d3.ZoomTransform) =>
-		Utils.getVisibleBounds(transform, CONFIG.baseTriangleSize, geometryConstants.spacing);
+	function getVisibleBounds(transform: d3.ZoomTransform) {
+		return Utils.getVisibleBounds(transform, CONFIG.baseTriangleSize, geometryConstants.spacing);
+	}
 
 	function createTriangleBase(
 		triangleParent: d3.Selection<SVGGElement, unknown, null, undefined>,
@@ -910,26 +1002,33 @@
 
 		triangleParent
 			.append('polygon')
-			.attr('points', vertices.map((v) => `${v.x},${v.y}`).join(' '))
+			.attr(
+				'points',
+				vertices
+					.map(function (v) {
+						return `${v.x},${v.y}`;
+					})
+					.join(' ')
+			)
 			.attr('fill', 'transparent')
 			.attr('stroke', CONFIG.triangle.strokeColor)
 			.attr('stroke-width', CONFIG.triangle.strokeWidth)
 			.attr('opacity', CONFIG.triangle.opacity)
 			.style('cursor', 'pointer')
 			.attr('data-triangle-type', getTriangleType(row, col, up))
-			.classed('highlighted-triangle', () => {
+			.classed('highlighted-triangle', function () {
 				const triangleType = getTriangleType(row, col, up);
 				return isChordHighlighted(triangleType);
 			})
-			.classed('scale-highlight', () => {
+			.classed('scale-highlight', function () {
 				return isTriangleScaleHighlighted(row, col, up);
 			})
 
-			.on('mousedown', (event: MouseEvent) => {
+			.on('mousedown', function (event: MouseEvent) {
 				handleMouseDown(event, 'chord', { row, col, up });
 			})
 
-			.on('mouseenter', () => {
+			.on('mouseenter', function () {
 				innerTriangleElement = handleOnMouseEnter({
 					row,
 					col,
@@ -938,13 +1037,13 @@
 					parent: innerTriangleParent,
 					pos,
 					type: 'triangle',
-					onDrag: () => {
+					onDrag: function () {
 						const triangleType = getTriangleType(row, col, up);
 						highlightChord(triangleType);
 					}
 				});
 			})
-			.on('mouseleave', () => {
+			.on('mouseleave', function () {
 				innerTriangleElement = handleOnMouseLeave({ element: innerTriangleElement });
 			});
 
@@ -972,14 +1071,23 @@
 	) {
 		const vertices = getTriangleVertices(gridPos, gridUp);
 		const center = getCentroid(vertices);
-		const innerVertices = vertices.map((vertex) => ({
-			x: center.x + (vertex.x - center.x) * geometryConstants.scale,
-			y: center.y + (vertex.y - center.y) * geometryConstants.scale
-		}));
+		const innerVertices = vertices.map(function (vertex) {
+			return {
+				x: center.x + (vertex.x - center.x) * geometryConstants.scale,
+				y: center.y + (vertex.y - center.y) * geometryConstants.scale
+			};
+		});
 
 		return parent
 			.append('polygon')
-			.attr('points', innerVertices.map((v) => `${v.x},${v.y}`).join(' '))
+			.attr(
+				'points',
+				innerVertices
+					.map(function (v) {
+						return `${v.x},${v.y}`;
+					})
+					.join(' ')
+			)
 			.attr('fill', CONFIG.innerTriangle.fillColor)
 			.attr('stroke', CONFIG.innerTriangle.strokeColor)
 			.attr('stroke-width', CONFIG.innerTriangle.strokeWidth)
@@ -1002,53 +1110,53 @@
 			.attr('fill', CONFIG.vertex.color)
 			.attr('opacity', CONFIG.vertex.opacity)
 			.style('cursor', 'pointer')
-			.attr('data-note', () => {
+			.attr('data-note', function () {
 				const { q, r } = cartesianToHex(pos.x, pos.y);
 				return getPitchWithOctave(q, r, tonnetzSystemState.currentRootNote);
 			})
-			.classed('highlighted-vertex', () => {
+			.classed('highlighted-vertex', function () {
 				const { q, r } = cartesianToHex(pos.x, pos.y);
 				const noteName = getPitchWithOctave(q, r, tonnetzSystemState.currentRootNote);
 				return isNoteHighlighted(noteName);
 			})
-			.classed('scale-highlight', () => {
+			.classed('scale-highlight', function () {
 				const { q, r } = cartesianToHex(pos.x, pos.y);
 				const noteName = getPitchWithOctave(q, r, tonnetzSystemState.currentRootNote);
 				return isScaleHighlighted(noteName);
 			})
 
 			// Update the mousedown handler for notes
-			.on('mousedown', (event: MouseEvent) => {
+			.on('mousedown', function (event: MouseEvent) {
 				handleMouseDown(event, 'note', {
 					x: pos.x,
 					y: pos.y,
 					rootNote: tonnetzSystemState.currentRootNote
 				});
 			})
-			.on('mouseenter', () => {
+			.on('mouseenter', function () {
 				innerCircleElement = handleOnMouseEnter({
 					element: innerCircleElement,
 					parent: innerCircleParent,
 					pos,
 					type: 'circle',
-					onDrag: () => {
+					onDrag: function () {
 						const { q, r } = cartesianToHex(pos.x, pos.y);
 						const noteName = getPitchWithOctave(q, r, tonnetzSystemState.currentRootNote);
 						highlightNote(noteName);
 					}
 				});
 			})
-			.on('mouseleave', () => {
+			.on('mouseleave', function () {
 				innerCircleElement = handleOnMouseLeave({ element: innerCircleElement });
 			});
 	}
 
 	// Element creation functions
-	const createInnerCircleElement = (
+	function createInnerCircleElement(
 		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
 		pos: { x: number; y: number }
-	) =>
-		parent
+	) {
+		return parent
 			.append('circle')
 			.attr('cx', pos.x)
 			.attr('cy', pos.y)
@@ -1058,13 +1166,14 @@
 			.attr('stroke-width', CONFIG.innerCircle.strokeWidth)
 			.attr('opacity', CONFIG.innerCircle.opacity)
 			.style('pointer-events', 'none');
+	}
 
-	const createVertexLabel = (
+	function createVertexLabel(
 		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
 		pos: { x: number; y: number },
 		label: string
-	) =>
-		parent
+	) {
+		return parent
 			.append('text')
 			.attr('x', pos.x)
 			.attr('y', pos.y)
@@ -1075,20 +1184,21 @@
 			.attr('fill', CONFIG.vertexLabel.color)
 			.style('pointer-events', 'none')
 			.text(label);
+	}
 
-	const createLabel = (
+	const createLabel = function (
 		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
 		gridPos: { x: number; y: number },
 		gridUp: boolean,
 		title: string,
 		subtitle: string
-	) => {
+	) {
 		const center = getCentroid(getTriangleVertices(gridPos, gridUp));
 		[
 			{ text: title, y: center.y - CONFIG.label.spacing / 2, config: CONFIG.label.title },
 			{ text: subtitle, y: center.y + CONFIG.label.spacing / 2, config: CONFIG.label.subtitle }
-		].forEach(({ text, y, config }) =>
-			parent
+		].forEach(function ({ text, y, config }) {
+			return parent
 				.append('text')
 				.attr('x', center.x)
 				.attr('y', y)
@@ -1098,8 +1208,8 @@
 				.attr('font-family', config.fontFamily)
 				.attr('fill', config.color)
 				.style('pointer-events', 'none')
-				.text(text)
-		);
+				.text(text);
+		});
 	};
 
 	// function handleMidiFileChange(event) {
