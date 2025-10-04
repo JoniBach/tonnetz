@@ -223,7 +223,6 @@
 			});
 	}
 
-	let viewportUpdateTimeout: ReturnType<typeof setTimeout>;
 	let currentTransform: d3.ZoomTransform = d3.zoomIdentity;
 
 	// Wrapper functions that inject dependencies into pure functions
