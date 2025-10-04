@@ -9,15 +9,142 @@
 	import { createTonnetzSystem } from './tonnetzSystem.js';
 	import { EventSystem } from './tonnetzSystem.js';
 	import { initAudio, sustainNotes, stopSustainedNotes, disposeAudio } from './simple-audio.js';
+	type ElementType = 'triangle' | 'circle';
+
+	interface HandleHoverParams {
+		row?: number;
+		col?: number;
+		up?: boolean;
+		element: d3.Selection<SVGElement, unknown, null, undefined> | null;
+		parent: d3.Selection<SVGGElement, unknown, null, undefined>;
+		pos: { x: number; y: number };
+		type: ElementType;
+		onDrag?: () => void;
+	}
+
 	let container: HTMLDivElement;
 	let svg: d3.Selection<SVGSVGElement, unknown, null, undefined>;
 	let gridGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
 	let midiFile: Uint8Array | null = null;
+	let currentTransform: d3.ZoomTransform = d3.zoomIdentity;
 
 	const geometryConstants = createGeometryConstants(CONFIG);
 	const eventSystem = EventSystem.getInstance();
 
 	let tonnetzSystemState = $state(createTonnetzSystem(CONFIG));
+
+	$effect(() => {
+		// Create a stable reference to the values we care about
+		const notes = [
+			tonnetzSystemState.highlightedNote,
+			tonnetzSystemState.selectedNotes?.size || 0,
+			tonnetzSystemState.highlightedPatternNotes?.size || 0,
+			tonnetzSystemState.selectedChordPattern,
+			tonnetzSystemState.chordPatternRoot,
+			tonnetzSystemState.selectedScale,
+			tonnetzSystemState.selectedMode,
+			tonnetzSystemState.scaleRoot,
+			tonnetzSystemState.highlightedScaleNotes?.size || 0,
+			tonnetzSystemState.qInterval,
+			tonnetzSystemState.rInterval
+		].join('|');
+
+		// Only run the effect when these values actually change
+		$effect.root(() => {
+			const hasHighlighted = tonnetzSystemState.highlightedNote !== null;
+			const hasSelected = tonnetzSystemState.selectedNotes?.size > 0;
+			const hasPattern = tonnetzSystemState.highlightedPatternNotes?.size > 0;
+
+			if (hasHighlighted || hasSelected || hasPattern) {
+				debouncedAudioUpdate();
+			} else if (tonnetzSystemState.isPlaying) {
+				stopSustainedNotes();
+				tonnetzSystemState.isPlaying = false;
+			}
+		});
+	});
+
+	onDestroy(() => {
+		disposeAudio();
+	});
+
+	onMount(function () {
+		// Initialize SVG and grid
+		initTonnetz(tonnetzSystemState);
+
+		// Add this event listener
+		const controlPanelUpdateUnsubscribe = eventSystem.on('CONTROL_PANEL_UPDATE', (state) => {
+			// Trigger the same update logic as mouseup
+			updateHighlightsOnly(tonnetzSystemState);
+
+			// If you have any other update logic that runs on mouseup, include it here
+			// For example, if you have a function called updateViewport, call it:
+			if (currentTransform) {
+				updateViewport(currentTransform, tonnetzSystemState);
+			}
+		});
+
+		// Set up event listeners
+		const cleanupListeners = tonnetzSystemState.setupEventListeners(container, svg.node()!);
+
+		// Handle mouse up events
+		const unsubscribeMouseUp = eventSystem.on('MOUSE_UP', function (data) {
+			// Stop all playing notes
+
+			if (data.wasDragging && !data.shiftKey && tonnetzSystemState.isDragging) {
+				tonnetzSystemState.highlightedNote = null;
+				tonnetzSystemState.selectedNotes = new Set<string>();
+				tonnetzSystemState.highlightedChordsCache.clear();
+				tonnetzSystemState.lastSelectedNotesHash = '';
+				eventSystem.emit('STATE_UPDATE');
+				tonnetzSystemState.isDragging = false;
+			}
+
+			// Update highlights if needed
+			if (gridGroup && (tonnetzSystemState.selectedScale || tonnetzSystemState.selectedMode)) {
+				updateHighlightsOnly(tonnetzSystemState);
+			}
+		});
+
+		// Handle state updates
+		const unsubscribeStateUpdate = eventSystem.on('STATE_UPDATE', function () {
+			updateViewport(currentTransform, tonnetzSystemState);
+			updateHighlightsOnly(tonnetzSystemState);
+		});
+
+		// Handle window resize
+		const handleResize = function () {
+			const [width, height] = [window.innerWidth, window.innerHeight];
+			if (svg) {
+				svg.attr('width', width).attr('height', height);
+				eventSystem.emit('RESIZE', { width, height });
+			}
+		};
+
+		// Add global mouse up handler to catch mouse up outside the SVG
+		const handleGlobalMouseUp = function (tonnetzSystemState) {
+			tonnetzSystemState.isDragging = false;
+		};
+		window.addEventListener('mouseup', handleGlobalMouseUp);
+
+		// Initial resize
+		handleResize();
+		window.addEventListener('resize', handleResize);
+
+		// Cleanup function
+		return function () {
+			// Cleanup all event listeners
+			cleanupListeners();
+			unsubscribeMouseUp();
+			unsubscribeStateUpdate();
+			controlPanelUpdateUnsubscribe();
+
+			window.removeEventListener('resize', handleResize);
+			window.removeEventListener('mouseup', handleGlobalMouseUp);
+			// Cleanup any other resources
+			tonnetzSystemState.cleanup();
+		};
+	});
 
 	// Global mouse up handler
 	function handleGlobalMouseUp(tonnetzSystemState) {
@@ -112,84 +239,6 @@
 		return cleanup;
 	}
 
-	onMount(function () {
-		// Initialize SVG and grid
-		initTonnetz(tonnetzSystemState);
-
-		// Add this event listener
-		const controlPanelUpdateUnsubscribe = eventSystem.on('CONTROL_PANEL_UPDATE', (state) => {
-			// Trigger the same update logic as mouseup
-			updateHighlightsOnly(tonnetzSystemState);
-
-			// If you have any other update logic that runs on mouseup, include it here
-			// For example, if you have a function called updateViewport, call it:
-			if (currentTransform) {
-				updateViewport(currentTransform, tonnetzSystemState);
-			}
-		});
-
-		// Set up event listeners
-		const cleanupListeners = tonnetzSystemState.setupEventListeners(container, svg.node()!);
-
-		// Handle mouse up events
-		const unsubscribeMouseUp = eventSystem.on('MOUSE_UP', function (data) {
-			// Stop all playing notes
-
-			if (data.wasDragging && !data.shiftKey && tonnetzSystemState.isDragging) {
-				tonnetzSystemState.highlightedNote = null;
-				tonnetzSystemState.selectedNotes = new Set<string>();
-				tonnetzSystemState.highlightedChordsCache.clear();
-				tonnetzSystemState.lastSelectedNotesHash = '';
-				eventSystem.emit('STATE_UPDATE');
-				tonnetzSystemState.isDragging = false;
-			}
-
-			// Update highlights if needed
-			if (gridGroup && (tonnetzSystemState.selectedScale || tonnetzSystemState.selectedMode)) {
-				updateHighlightsOnly(tonnetzSystemState);
-			}
-		});
-
-		// Handle state updates
-		const unsubscribeStateUpdate = eventSystem.on('STATE_UPDATE', function () {
-			updateViewport(currentTransform, tonnetzSystemState);
-			updateHighlightsOnly(tonnetzSystemState);
-		});
-
-		// Handle window resize
-		const handleResize = function () {
-			const [width, height] = [window.innerWidth, window.innerHeight];
-			if (svg) {
-				svg.attr('width', width).attr('height', height);
-				eventSystem.emit('RESIZE', { width, height });
-			}
-		};
-
-		// Add global mouse up handler to catch mouse up outside the SVG
-		const handleGlobalMouseUp = function (tonnetzSystemState) {
-			tonnetzSystemState.isDragging = false;
-		};
-		window.addEventListener('mouseup', handleGlobalMouseUp);
-
-		// Initial resize
-		handleResize();
-		window.addEventListener('resize', handleResize);
-
-		// Cleanup function
-		return function () {
-			// Cleanup all event listeners
-			cleanupListeners();
-			unsubscribeMouseUp();
-			unsubscribeStateUpdate();
-			controlPanelUpdateUnsubscribe();
-
-			window.removeEventListener('resize', handleResize);
-			window.removeEventListener('mouseup', handleGlobalMouseUp);
-			// Cleanup any other resources
-			tonnetzSystemState.cleanup();
-		};
-	});
-
 	function createZoomBehavior(config: any) {
 		return d3
 			.zoom()
@@ -216,8 +265,6 @@
 				eventSystem.emit('STATE_UPDATE');
 			});
 	}
-
-	let currentTransform: d3.ZoomTransform = d3.zoomIdentity;
 
 	// Wrapper functions that inject dependencies into pure functions
 	function getTriangleVertices(pos: { x: number; y: number }, up: boolean) {
@@ -1038,19 +1085,6 @@
 		return vertices;
 	}
 
-	type ElementType = 'triangle' | 'circle';
-
-	interface HandleHoverParams {
-		row?: number;
-		col?: number;
-		up?: boolean;
-		element: d3.Selection<SVGElement, unknown, null, undefined> | null;
-		parent: d3.Selection<SVGGElement, unknown, null, undefined>;
-		pos: { x: number; y: number };
-		type: ElementType;
-		onDrag?: () => void;
-	}
-
 	// Optimized inner triangle creation
 	function createInnerTriangleElement(
 		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
@@ -1272,41 +1306,6 @@
 			}
 		}, 16);
 	};
-
-	$effect(() => {
-		// Create a stable reference to the values we care about
-		const notes = [
-			tonnetzSystemState.highlightedNote,
-			tonnetzSystemState.selectedNotes?.size || 0,
-			tonnetzSystemState.highlightedPatternNotes?.size || 0,
-			tonnetzSystemState.selectedChordPattern,
-			tonnetzSystemState.chordPatternRoot,
-			tonnetzSystemState.selectedScale,
-			tonnetzSystemState.selectedMode,
-			tonnetzSystemState.scaleRoot,
-			tonnetzSystemState.highlightedScaleNotes?.size || 0,
-			tonnetzSystemState.qInterval,
-			tonnetzSystemState.rInterval
-		].join('|');
-
-		// Only run the effect when these values actually change
-		$effect.root(() => {
-			const hasHighlighted = tonnetzSystemState.highlightedNote !== null;
-			const hasSelected = tonnetzSystemState.selectedNotes?.size > 0;
-			const hasPattern = tonnetzSystemState.highlightedPatternNotes?.size > 0;
-
-			if (hasHighlighted || hasSelected || hasPattern) {
-				debouncedAudioUpdate();
-			} else if (tonnetzSystemState.isPlaying) {
-				stopSustainedNotes();
-				tonnetzSystemState.isPlaying = false;
-			}
-		});
-	});
-
-	onDestroy(() => {
-		disposeAudio();
-	});
 </script>
 
 <!-- Control Panel -->
