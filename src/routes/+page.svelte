@@ -305,7 +305,7 @@
 	}
 
 	// Coordinate lookup with caching
-	const getNoteCoordsFromCache = function (noteName: string, tonnetzSystemState) {
+	function getNoteCoordsFromCache(noteName: string, tonnetzSystemState) {
 		const cacheKey = Utils.createCacheKey(
 			noteName,
 			tonnetzSystemState.currentRootNote,
@@ -329,15 +329,15 @@
 			tonnetzSystemState.coordinateCache.set(cacheKey, coords);
 		}
 		return coords;
-	};
+	}
 
 	// Triad combination generator
-	const getTriadCombinations = function (arr: string[]) {
+	function getTriadCombinations(arr: string[]) {
 		return Utils.getTriadCombinations(arr);
-	};
+	}
 
 	// Debounced chord calculation to prevent excessive computation
-	const debouncedChordCalculation = function (tonnetzSystemState) {
+	function debouncedChordCalculation(tonnetzSystemState) {
 		if (tonnetzSystemState.debouncedChordTimeout) {
 			clearTimeout(tonnetzSystemState.debouncedChordTimeout);
 		}
@@ -367,17 +367,17 @@
 				});
 			}
 		}, 16); // ~60fps throttle
-	};
+	}
 
 	// Throttled drag update to prevent excessive DOM updates
-	const throttledDragUpdate = function (tonnetzSystemState) {
+	function throttledDragUpdate(tonnetzSystemState) {
 		if (tonnetzSystemState.throttledDragTimeout) return;
 
 		tonnetzSystemState.throttledDragTimeout = setTimeout(function () {
 			updateHighlightsOnly(tonnetzSystemState);
 			tonnetzSystemState.throttledDragTimeout = null;
 		}, 16); // ~60fps throttle
-	};
+	}
 
 	// Optimized chord detection with major/minor distinction
 	function getTriangleChord(row: number, col: number, isUp: boolean, tonnetzSystemState): string {
@@ -424,21 +424,21 @@
 	}
 
 	// Utility functions
-	const changeTonnetzPreset = function (presetName: string, tonnetzSystemState) {
+	function changeTonnetzPreset(presetName: string, tonnetzSystemState) {
 		const preset = CONFIG.tonnetz.presets[presetName as keyof typeof CONFIG.tonnetz.presets];
 		if (preset) {
 			tonnetzSystemState.currentTonnetzName = presetName;
 			tonnetzSystemState.qInterval = preset.qInterval;
 			tonnetzSystemState.rInterval = preset.rInterval;
 		}
-	};
+	}
 
 	function getIntervalDescription(semitones: number) {
 		return INTERVAL_NAMES[semitones] || `${semitones} semitones`;
 	}
 
 	// Highlight functions - simplified to work with notes only
-	const highlightChord = function (chordType: string, tonnetzSystemState) {
+	function highlightChord(chordType: string, tonnetzSystemState) {
 		// Get the notes that make up this chord
 		const chordNotes = getChordNotes(chordType, tonnetzSystemState);
 
@@ -474,9 +474,9 @@
 
 		// Trigger debounced chord calculation and highlight update
 		debouncedChordCalculation(tonnetzSystemState);
-	};
+	}
 
-	const highlightNote = function (name: string, tonnetzSystemState) {
+	function highlightNote(name: string, tonnetzSystemState) {
 		if (tonnetzSystemState.isShiftPressed) {
 			tonnetzSystemState.selectedNotes.has(name)
 				? tonnetzSystemState.selectedNotes.delete(name)
@@ -488,10 +488,10 @@
 			tonnetzSystemState.selectedNotes.clear();
 		}
 		debouncedChordCalculation(tonnetzSystemState);
-	};
+	}
 
 	// Get notes that make up a chord
-	const getChordNotes = function (chordType: string, tonnetzSystemState) {
+	function getChordNotes(chordType: string, tonnetzSystemState) {
 		if (!chordType || chordType === 'null') return [];
 
 		// Parse chord type (e.g., "C-up" or "F#-down")
@@ -516,10 +516,10 @@
 			}
 		}
 		return [];
-	};
+	}
 
 	// Get chord type from a set of notes
-	const getChordFromNotes = function (notes: string[], tonnetzSystemState) {
+	function getChordFromNotes(notes: string[], tonnetzSystemState) {
 		if (notes.length !== 3) return null;
 
 		// Search for triangles that contain exactly these 3 notes
@@ -546,10 +546,10 @@
 			}
 		}
 		return null;
-	};
+	}
 
 	// Legacy function kept for compatibility - redirects to optimized version
-	const getCombinations = function (arr: string[], size: number) {
+	function getCombinations(arr: string[], size: number) {
 		if (size === 3) {
 			return getTriadCombinations(arr);
 		}
@@ -570,7 +570,7 @@
 			}
 		}
 		return result;
-	};
+	}
 
 	function isChordHighlighted(name: string, tonnetzSystemState) {
 		if (tonnetzSystemState.highlightedChordsCache.has(name)) return true;
@@ -592,12 +592,7 @@
 		return tonnetzSystemState.highlightedScaleNotes.has(name);
 	}
 
-	const isTriangleScaleHighlighted = function (
-		row: number,
-		col: number,
-		isUp: boolean,
-		tonnetzSystemState
-	) {
+	function isTriangleScaleHighlighted(row: number, col: number, isUp: boolean, tonnetzSystemState) {
 		if (tonnetzSystemState.highlightedScaleNotes.size === 0) return false;
 		const pos = { x: col * geometryConstants.spacing.col, y: row * geometryConstants.spacing.row };
 		const vertices = getTriangleVertices(pos, isUp);
@@ -607,7 +602,7 @@
 				getPitchWithOctave(q, r, tonnetzSystemState.currentRootNote, tonnetzSystemState)
 			);
 		});
-	};
+	}
 
 	// Get all currently highlighted/selected notes
 	function getAllHighlightedNotes(tonnetzSystemState): string[] {
@@ -619,7 +614,7 @@
 	}
 
 	// Get all chords that are currently highlighted (formed by selected notes) - optimized with cache
-	const getHighlightedChords = function (tonnetzSystemState) {
+	function getHighlightedChords(tonnetzSystemState) {
 		// Use cached results for better performance
 		if (tonnetzSystemState.highlightedChordsCache.size > 0) {
 			return Array.from(tonnetzSystemState.highlightedChordsCache);
@@ -632,10 +627,10 @@
 		}
 
 		return [];
-	};
+	}
 
 	// Get coordinate pattern from selected notes - optimized with caching
-	const getCoordinatePattern = function (tonnetzSystemState) {
+	function getCoordinatePattern(tonnetzSystemState) {
 		const allNotes = getAllHighlightedNotes(tonnetzSystemState);
 		if (allNotes.length === 0 && tonnetzSystemState.highlightedPatternNotes.size === 0) return '';
 
@@ -691,16 +686,16 @@
 		const result = JSON.stringify(coordinates);
 		tonnetzSystemState.coordinatePatternCache.set(cacheKey, result);
 		return result;
-	};
+	}
 
 	// Get coordinate for a single note - optimized with caching
-	const getCoordinateForNote = function (noteName: string) {
+	function getCoordinateForNote(noteName: string) {
 		const coords = getNoteCoordsFromCache(noteName, tonnetzSystemState);
 		if (coords) {
 			return `(${coords.q},${coords.r})`;
 		}
 		return '(?,?)';
-	};
+	}
 
 	// Generic pattern applier
 	function applyPattern(pattern: [number, number][], rootNote: string, tonnetzSystemState) {
@@ -714,7 +709,7 @@
 		);
 	}
 
-	const applyChordPattern = function (patternName: string, rootNote: string, tonnetzSystemState) {
+	function applyChordPattern(patternName: string, rootNote: string, tonnetzSystemState) {
 		const pattern = CONFIG.chordPatterns.presets[
 			patternName as keyof typeof CONFIG.chordPatterns.presets
 		] as [number, number][];
@@ -731,9 +726,9 @@
 		debouncedChordCalculation(tonnetzSystemState);
 
 		if (gridGroup) throttledDragUpdate(tonnetzSystemState);
-	};
+	}
 
-	const applyScale = function (scaleName: string, rootNote: string, tonnetzSystemState) {
+	function applyScale(scaleName: string, rootNote: string, tonnetzSystemState) {
 		const pattern = CONFIG.scales[scaleName as keyof typeof CONFIG.scales] as [number, number][];
 		if (!pattern?.length) return;
 		tonnetzSystemState.selectedScale = scaleName;
@@ -741,9 +736,9 @@
 		tonnetzSystemState.scaleRoot = rootNote;
 		tonnetzSystemState.highlightedScaleNotes = applyPattern(pattern, rootNote, tonnetzSystemState);
 		if (gridGroup) throttledDragUpdate(tonnetzSystemState);
-	};
+	}
 
-	const applyMode = function (modeName: string, rootNote: string, tonnetzSystemState) {
+	function applyMode(modeName: string, rootNote: string, tonnetzSystemState) {
 		const modeOffset = CONFIG.modes[modeName as keyof typeof CONFIG.modes];
 		const majorPattern = CONFIG.scales['Major Scale'];
 		if (modeOffset === undefined || !majorPattern) return;
@@ -760,9 +755,9 @@
 			tonnetzSystemState
 		);
 		if (gridGroup) throttledDragUpdate(tonnetzSystemState);
-	};
+	}
 
-	const clearChordPattern = function (tonnetzSystemState) {
+	function clearChordPattern(tonnetzSystemState) {
 		tonnetzSystemState.selectedChordPattern = null;
 		tonnetzSystemState.chordPatternRoot = null;
 		tonnetzSystemState.highlightedPatternNotes.clear();
@@ -773,15 +768,15 @@
 		debouncedChordCalculation(tonnetzSystemState);
 
 		if (gridGroup) updateHighlightsOnly(tonnetzSystemState);
-	};
+	}
 
-	const clearScale = function (tonnetzSystemState) {
+	function clearScale(tonnetzSystemState) {
 		tonnetzSystemState.selectedScale = null;
 		tonnetzSystemState.selectedMode = null;
 		tonnetzSystemState.scaleRoot = null;
 		tonnetzSystemState.highlightedScaleNotes.clear();
 		if (gridGroup) updateHighlightsOnly(tonnetzSystemState);
-	};
+	}
 
 	function createGrid() {
 		updateViewport(currentTransform, tonnetzSystemState);
