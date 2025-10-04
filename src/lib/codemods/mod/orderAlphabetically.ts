@@ -1,34 +1,34 @@
-/**
- * jscodeshift transform that alphabetically sorts all top-level function
- * declarations in a TypeScript file by their name.
- *
- * Usage:
- *   npx jscodeshift -t sort-functions-alphabetically.ts path/to/file.ts
- */
-
-import { API, FileInfo, JSCodeshift } from 'jscodeshift';
+import { API, FileInfo } from 'jscodeshift';
 
 export default function transformer(file: FileInfo, api: API) {
-	const j: JSCodeshift = api.jscodeshift;
+	const j = api.jscodeshift;
 	const root = j(file.source);
 
-	// Find all top-level function declarations (not inside other functions/classes)
-	const body = root.get().value.program.body;
-	const functionDecls = body.filter((node: any) => node.type === 'FunctionDeclaration' && node.id);
+	// Find all top-level function declarations
+	const funcDecls = root.find(j.FunctionDeclaration).nodes();
 
-	if (functionDecls.length === 0) return file.source;
+	if (funcDecls.length === 0) return null;
 
-	// Extract function declarations and others separately
-	const functions = functionDecls.map((node: any) => node);
-	const others = body.filter((node: any) => !functions.includes(node));
+	// Sort alphabetically by function name
+	funcDecls.sort((a, b) => {
+		const nameA = a.id?.name ?? '';
+		const nameB = b.id?.name ?? '';
+		return nameA.localeCompare(nameB);
+	});
 
-	// Sort functions alphabetically by name
-	functions.sort((a: any, b: any) =>
-		a.id.name.localeCompare(b.id.name, 'en', { sensitivity: 'base' })
-	);
+	// Remove original function declarations
+	root.find(j.FunctionDeclaration).remove();
 
-	// Replace file body with sorted functions followed by the rest
-	root.get().value.program.body = [...functions, ...others];
+	// Insert sorted functions at the top
+	const programNode = root.get().node; // safer access
+	if (programNode.type === 'File' && programNode.program?.body) {
+		programNode.program.body = [...funcDecls, ...programNode.program.body];
+	} else if (programNode.type === 'Program' && programNode.body) {
+		programNode.body = [...funcDecls, ...programNode.body];
+	} else {
+		console.error('Unexpected AST structure:', programNode.type);
+		return null;
+	}
 
 	return root.toSource({ quote: 'single', trailingComma: true });
 }

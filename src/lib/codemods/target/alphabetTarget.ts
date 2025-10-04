@@ -1,3 +1,37 @@
+function applyChordPattern(patternName: string, rootNote: string, tonnetzSystemState) {
+	const pattern = CONFIG.chordPatterns.presets[
+		patternName as keyof typeof CONFIG.chordPatterns.presets
+	] as [number, number][];
+	if (!pattern) return;
+	tonnetzSystemState.selectedChordPattern = patternName;
+	tonnetzSystemState.chordPatternRoot = rootNote;
+	tonnetzSystemState.highlightedPatternNotes = applyPattern(pattern, rootNote, tonnetzSystemState);
+
+	// Trigger chord detection for triangle highlighting
+	debouncedChordCalculation(tonnetzSystemState);
+
+	if (gridGroup) throttledDragUpdate(tonnetzSystemState);
+}
+
+function applyMode(modeName: string, rootNote: string, tonnetzSystemState) {
+	const modeOffset = CONFIG.modes[modeName as keyof typeof CONFIG.modes];
+	const majorPattern = CONFIG.scales['Major Scale'];
+	if (modeOffset === undefined || !majorPattern) return;
+
+	const shiftedPattern = majorPattern.map(function ([q, r]) {
+		return [q + modeOffset, r] as [number, number];
+	});
+	tonnetzSystemState.selectedMode = modeName;
+	tonnetzSystemState.selectedScale = null;
+	tonnetzSystemState.scaleRoot = rootNote;
+	tonnetzSystemState.highlightedScaleNotes = applyPattern(
+		shiftedPattern,
+		rootNote,
+		tonnetzSystemState
+	);
+	if (gridGroup) throttledDragUpdate(tonnetzSystemState);
+}
+
 // Generic pattern applier
 function applyPattern(pattern: [number, number][], rootNote: string, tonnetzSystemState) {
 	return Utils.applyPattern(
@@ -10,8 +44,49 @@ function applyPattern(pattern: [number, number][], rootNote: string, tonnetzSyst
 	);
 }
 
+function applyScale(scaleName: string, rootNote: string, tonnetzSystemState) {
+	const pattern = CONFIG.scales[scaleName as keyof typeof CONFIG.scales] as [number, number][];
+	if (!pattern?.length) return;
+	tonnetzSystemState.selectedScale = scaleName;
+	tonnetzSystemState.selectedMode = null;
+	tonnetzSystemState.scaleRoot = rootNote;
+	tonnetzSystemState.highlightedScaleNotes = applyPattern(pattern, rootNote, tonnetzSystemState);
+	if (gridGroup) throttledDragUpdate(tonnetzSystemState);
+}
+
 function cartesianToHex(x: number, y: number) {
 	return Utils.cartesianToHex(x, y, CONFIG.baseTriangleSize, geometryConstants.triHeight);
+}
+
+// Utility functions
+function changeTonnetzPreset(presetName: string, tonnetzSystemState) {
+	const preset = CONFIG.tonnetz.presets[presetName as keyof typeof CONFIG.tonnetz.presets];
+	if (preset) {
+		tonnetzSystemState.currentTonnetzName = presetName;
+		tonnetzSystemState.qInterval = preset.qInterval;
+		tonnetzSystemState.rInterval = preset.rInterval;
+	}
+}
+
+function clearChordPattern(tonnetzSystemState) {
+	tonnetzSystemState.selectedChordPattern = null;
+	tonnetzSystemState.chordPatternRoot = null;
+	tonnetzSystemState.highlightedPatternNotes.clear();
+
+	// Clear chord cache and trigger recalculation
+	tonnetzSystemState.highlightedChordsCache.clear();
+	tonnetzSystemState.lastSelectedNotesHash = '';
+	debouncedChordCalculation(tonnetzSystemState);
+
+	if (gridGroup) updateHighlightsOnly(tonnetzSystemState);
+}
+
+function clearScale(tonnetzSystemState) {
+	tonnetzSystemState.selectedScale = null;
+	tonnetzSystemState.selectedMode = null;
+	tonnetzSystemState.scaleRoot = null;
+	tonnetzSystemState.highlightedScaleNotes.clear();
+	if (gridGroup) updateHighlightsOnly(tonnetzSystemState);
 }
 
 function createCircleBase(
@@ -147,6 +222,32 @@ function createInnerTriangleElement(
 		.style('pointer-events', 'none');
 }
 
+function createLabel(
+	parent: d3.Selection<SVGGElement, unknown, null, undefined>,
+	gridPos: { x: number; y: number },
+	gridUp: boolean,
+	title: string,
+	subtitle: string
+) {
+	const center = getCentroid(getTriangleVertices(gridPos, gridUp));
+	[
+		{ text: title, y: center.y - CONFIG.label.spacing / 2, config: CONFIG.label.title },
+		{ text: subtitle, y: center.y + CONFIG.label.spacing / 2, config: CONFIG.label.subtitle }
+	].forEach(function ({ text, y, config }) {
+		return parent
+			.append('text')
+			.attr('x', center.x)
+			.attr('y', y)
+			.attr('text-anchor', 'middle')
+			.attr('dominant-baseline', 'middle')
+			.attr('font-size', config.fontSize)
+			.attr('font-family', config.fontFamily)
+			.attr('fill', config.color)
+			.style('pointer-events', 'none')
+			.text(text);
+	});
+}
+
 function createTriangleBase(
 	triangleParent: d3.Selection<SVGGElement, unknown, null, undefined>,
 	innerTriangleParent: d3.Selection<SVGGElement, unknown, null, undefined>,
@@ -256,6 +357,59 @@ function createZoomBehavior(config: any) {
 		});
 }
 
+function debouncedAudioUpdate() {
+	if (tonnetzSystemState.autoPlayTimeout) {
+		clearTimeout(tonnetzSystemState.autoPlayTimeout);
+	}
+
+	tonnetzSystemState.autoPlayTimeout = setTimeout(async () => {
+		const currentNotes = getCurrentNotes(tonnetzSystemState);
+		if (currentNotes.length > 0) {
+			try {
+				await initAudio();
+				await sustainNotes(currentNotes);
+				tonnetzSystemState.isPlaying = true;
+			} catch (error) {
+				console.error('Error in debouncedAudioUpdate:', error);
+				tonnetzSystemState.isPlaying = false;
+			}
+		}
+	}, 16);
+}
+
+// Debounced chord calculation to prevent excessive computation
+function debouncedChordCalculation(tonnetzSystemState) {
+	if (tonnetzSystemState.debouncedChordTimeout) {
+		clearTimeout(tonnetzSystemState.debouncedChordTimeout);
+	}
+
+	tonnetzSystemState.debouncedChordTimeout = setTimeout(function () {
+		const allNotes = getAllHighlightedNotes(tonnetzSystemState);
+		const currentHash = JSON.stringify([...allNotes].sort());
+
+		// Only recalculate if notes have actually changed
+		if (currentHash !== tonnetzSystemState.lastSelectedNotesHash) {
+			tonnetzSystemState.lastSelectedNotesHash = currentHash;
+			tonnetzSystemState.highlightedChordsCache.clear();
+
+			if (allNotes.length >= 3) {
+				const combinations = getTriadCombinations(allNotes);
+				for (const combination of combinations) {
+					const formedChord = getChordFromNotes(combination, tonnetzSystemState);
+					if (formedChord) {
+						tonnetzSystemState.highlightedChordsCache.add(formedChord);
+					}
+				}
+			}
+
+			// Update highlights after calculation
+			requestAnimationFrame(function () {
+				return updateHighlightsOnly(tonnetzSystemState);
+			});
+		}
+	}, 16); // ~60fps throttle
+}
+
 // Get all currently highlighted/selected notes
 function getAllHighlightedNotes(tonnetzSystemState): string[] {
 	return Utils.getAllHighlightedNotes(
@@ -269,8 +423,230 @@ function getCentroid(vertices: { x: number; y: number }[]) {
 	return Utils.getCentroid(vertices);
 }
 
+// Get chord type from a set of notes
+function getChordFromNotes(notes: string[], tonnetzSystemState) {
+	if (notes.length !== 3) return null;
+
+	// Search for triangles that contain exactly these 3 notes
+	for (let row = -10; row <= 10; row++) {
+		for (let col = -10; col <= 10; col++) {
+			const isUp = (row + col) % 2 === 0;
+			const pos = {
+				x: col * geometryConstants.spacing.col,
+				y: row * geometryConstants.spacing.row
+			};
+			const vertices = getTriangleVertices(pos, isUp);
+			const triangleNotes = vertices.map(function (v) {
+				const { q, r } = cartesianToHex(v.x, v.y);
+				return getPitchWithOctave(q, r, tonnetzSystemState.currentRootNote, tonnetzSystemState);
+			});
+
+			// Check if this triangle contains exactly the same notes
+			const sortedTriangleNotes = [...triangleNotes].sort();
+			const sortedInputNotes = [...notes].sort();
+
+			if (JSON.stringify(sortedTriangleNotes) === JSON.stringify(sortedInputNotes)) {
+				return getTriangleType(row, col, isUp);
+			}
+		}
+	}
+	return null;
+}
+
+// Get notes that make up a chord
+function getChordNotes(chordType: string, tonnetzSystemState) {
+	if (!chordType || chordType === 'null') return [];
+
+	// Parse chord type (e.g., "C-up" or "F#-down")
+	const [chordName, orientation] = chordType.split('-');
+	if (!chordName || !orientation) return [];
+
+	// Find a triangle with this chord type to get its vertices
+	for (let row = -5; row <= 5; row++) {
+		for (let col = -5; col <= 5; col++) {
+			const isUp = (row + col) % 2 === 0;
+			if (getTriangleType(row, col, isUp) === chordType) {
+				const pos = {
+					x: col * geometryConstants.spacing.col,
+					y: row * geometryConstants.spacing.row
+				};
+				const vertices = getTriangleVertices(pos, isUp);
+				return vertices.map(function (v) {
+					const { q, r } = cartesianToHex(v.x, v.y);
+					return getPitchWithOctave(q, r, tonnetzSystemState.currentRootNote, tonnetzSystemState);
+				});
+			}
+		}
+	}
+	return [];
+}
+
+// Legacy function kept for compatibility - redirects to optimized version
+function getCombinations(arr: string[], size: number) {
+	if (size === 3) {
+		return getTriadCombinations(arr);
+	}
+	// Fallback for other sizes (rarely used)
+	if (size > arr.length) return [];
+	if (size === 1)
+		return arr.map(function (item) {
+			return [item];
+		});
+	if (size === arr.length) return [arr];
+
+	const result: string[][] = [];
+	for (let i = 0; i <= arr.length - size; i++) {
+		const head = arr[i];
+		const tailCombinations = getCombinations(arr.slice(i + 1), size - 1);
+		for (const tail of tailCombinations) {
+			result.push([head, ...tail]);
+		}
+	}
+	return result;
+}
+
+// Get coordinate for a single note - optimized with caching
+function getCoordinateForNote(noteName: string) {
+	const coords = getNoteCoordsFromCache(noteName, tonnetzSystemState);
+	if (coords) {
+		return `(${coords.q},${coords.r})`;
+	}
+	return '(?,?)';
+}
+
+// Get coordinate pattern from selected notes - optimized with caching
+function getCoordinatePattern(tonnetzSystemState) {
+	const allNotes = getAllHighlightedNotes(tonnetzSystemState);
+	if (allNotes.length === 0 && tonnetzSystemState.highlightedPatternNotes.size === 0) return '';
+
+	const notesToCheck =
+		tonnetzSystemState.highlightedPatternNotes.size > 0
+			? Array.from(tonnetzSystemState.highlightedPatternNotes)
+			: allNotes;
+
+	// Create cache key
+	const cacheKey = `${JSON.stringify([...notesToCheck].sort())}-${tonnetzSystemState.currentRootNote}-${tonnetzSystemState.qInterval}-${tonnetzSystemState.rInterval}`;
+
+	if (tonnetzSystemState.coordinatePatternCache.has(cacheKey)) {
+		return tonnetzSystemState.coordinatePatternCache.get(cacheKey)!;
+	}
+
+	// Find all note coordinates using optimized cache lookup
+	const noteCoords: Array<{ note: string; q: number; r: number }> = [];
+
+	for (const noteName of notesToCheck) {
+		const coords = getNoteCoordsFromCache(noteName, tonnetzSystemState);
+		if (coords) {
+			noteCoords.push({ note: noteName, ...coords });
+		}
+	}
+
+	if (noteCoords.length === 0) return '';
+
+	// Find root note: use (0,0) if it exists, otherwise use the first note
+	let rootCoords: { q: number; r: number } | null = null;
+
+	// First try to find (0,0) as root
+	const zeroZero = noteCoords.find(function (nc) {
+		return nc.q === 0 && nc.r === 0;
+	});
+	if (zeroZero) {
+		rootCoords = { q: 0, r: 0 };
+	} else {
+		// Otherwise use the first note in the list as root
+		rootCoords = { q: noteCoords[0].q, r: noteCoords[0].r };
+	}
+
+	// Calculate relative coordinates from root
+	const coordinates: Array<[number, number]> = [];
+	for (const { q, r } of noteCoords) {
+		coordinates.push([q - rootCoords.q, r - rootCoords.r]);
+	}
+
+	// Sort coordinates for consistent display
+	coordinates.sort(function (a, b) {
+		return a[0] === b[0] ? a[1] - b[1] : a[0] - b[0];
+	});
+
+	const result = JSON.stringify(coordinates);
+	tonnetzSystemState.coordinatePatternCache.set(cacheKey, result);
+	return result;
+}
+
+function getCurrentNotes(tonnetzSystemState) {
+	// First priority: Individual note selections
+	if (tonnetzSystemState.selectedNotes.size > 0) {
+		return Array.from(tonnetzSystemState.selectedNotes);
+	}
+	// Second priority: Single highlighted note
+	else if (tonnetzSystemState.highlightedNote) {
+		return [tonnetzSystemState.highlightedNote];
+	}
+	// Third priority: Highlighted chords (triangles)
+	else if (getHighlightedChords(tonnetzSystemState).length > 0) {
+		// Extract all chord tones from highlighted chords
+		const allChordTones = [];
+		for (const chord of getHighlightedChords(tonnetzSystemState)) {
+			const [root, orientation] = chord.split('-');
+			const isMinor = orientation === 'up'; // up triangles are minor, down are major
+			const chordTones = getChordTones(root, isMinor);
+			allChordTones.push(...chordTones);
+		}
+		// Remove duplicates
+		return [...new Set(allChordTones)];
+	}
+	// Last priority: Pattern notes
+	else if (tonnetzSystemState.highlightedPatternNotes.size > 0) {
+		return Array.from(tonnetzSystemState.highlightedPatternNotes);
+	}
+	return [];
+}
+
+// Get all chords that are currently highlighted (formed by selected notes) - optimized with cache
+function getHighlightedChords(tonnetzSystemState) {
+	// Use cached results for better performance
+	if (tonnetzSystemState.highlightedChordsCache.size > 0) {
+		return Array.from(tonnetzSystemState.highlightedChordsCache);
+	}
+
+	// Trigger calculation if cache is empty and we have enough notes
+	const allNotes = getAllHighlightedNotes(tonnetzSystemState);
+	if (allNotes.length >= 3) {
+		debouncedChordCalculation(tonnetzSystemState);
+	}
+
+	return [];
+}
+
 function getIntervalDescription(semitones: number) {
 	return INTERVAL_NAMES[semitones] || `${semitones} semitones`;
+}
+
+// Coordinate lookup with caching
+function getNoteCoordsFromCache(noteName: string, tonnetzSystemState) {
+	const cacheKey = Utils.createCacheKey(
+		noteName,
+		tonnetzSystemState.currentRootNote,
+		tonnetzSystemState.qInterval,
+		tonnetzSystemState.rInterval
+	);
+
+	if (tonnetzSystemState.coordinateCache.has(cacheKey)) {
+		return tonnetzSystemState.coordinateCache.get(cacheKey)!;
+	}
+
+	const coords = Utils.findNoteCoordinates(
+		noteName,
+		tonnetzSystemState.currentRootNote,
+		tonnetzSystemState.qInterval,
+		tonnetzSystemState.rInterval,
+		getPitchWithOctave,
+		tonnetzSystemState
+	);
+	if (coords) {
+		tonnetzSystemState.coordinateCache.set(cacheKey, coords);
+	}
+	return coords;
 }
 
 function getPitchWithOctave(q: number, r: number, rootNote: string, tonnetzSystemState) {
@@ -284,6 +660,11 @@ function getPitchWithOctave(q: number, r: number, rootNote: string, tonnetzSyste
 		NOTES,
 		NOTE_TO_SEMITONE
 	);
+}
+
+// Triad combination generator
+function getTriadCombinations(arr: string[]) {
+	return Utils.getTriadCombinations(arr);
 }
 
 // Optimized chord detection with major/minor distinction
@@ -347,6 +728,19 @@ function getVisibleBounds(transform: d3.ZoomTransform) {
 // Global mouse up handler
 function handleGlobalMouseUp(tonnetzSystemState) {
 	tonnetzSystemState.isDragging = false;
+}
+
+// Keyboard event listeners for shift key
+function handleKeyDown(e: KeyboardEvent, tonnetzSystemState) {
+    if (e.key === 'Shift') {
+        tonnetzSystemState.isShiftPressed = true;
+    }
+}
+
+function handleKeyUp(e: KeyboardEvent, tonnetzSystemState) {
+    if (e.key === 'Shift') {
+        tonnetzSystemState.isShiftPressed = false;
+    }
 }
 
 function handleMouseDown(
@@ -431,12 +825,85 @@ function handleOnMouseLeave({
 	return element;
 }
 
-function initTonnetz(tonnetzSystemState) {
-	let width = window.innerWidth;
-	let height = window.innerHeight;
-	const zoom = createZoomBehavior(CONFIG);
+// Window resize handler
+function handleResize() {
+    if (!svg) return;
 
-	svg = d3
+    // Get new dimensions
+    const containerElement = svg.node()?.parentElement;
+    if (!containerElement) return;
+
+    const newWidth = containerElement.clientWidth;
+    const newHeight = containerElement.clientHeight;
+
+    // Update SVG dimensions
+    svg.attr('width', newWidth).attr('height', newHeight);
+
+    // Update viewport with current transform
+    if (currentTransform) {
+        updateViewport(currentTransform, tonnetzSystemState);
+    }
+}
+
+// Highlight functions - simplified to work with notes only
+function highlightChord(chordType: string, tonnetzSystemState) {
+	// Get the notes that make up this chord
+	const chordNotes = getChordNotes(chordType, tonnetzSystemState);
+
+	if (tonnetzSystemState.isShiftPressed) {
+		// Toggle selection: if all notes are selected, deselect them; otherwise select all
+		const allSelected = chordNotes.every(function (note) {
+			return tonnetzSystemState.selectedNotes.has(note);
+		});
+
+		if (allSelected) {
+			// Deselect all chord notes
+			chordNotes.forEach(function (note) {
+				return tonnetzSystemState.selectedNotes.delete(note);
+			});
+		} else {
+			// Select all chord notes
+			chordNotes.forEach(function (note) {
+				return tonnetzSystemState.selectedNotes.add(note);
+			});
+		}
+		tonnetzSystemState.selectedNotes = new Set(tonnetzSystemState.selectedNotes); // Trigger reactivity
+		// Clear single note highlight when using multi-select
+		tonnetzSystemState.highlightedNote = null;
+	} else {
+		// Normal single selection: clear everything and select chord notes
+		tonnetzSystemState.highlightedNote = null;
+		tonnetzSystemState.selectedNotes.clear();
+		chordNotes.forEach(function (note) {
+			return tonnetzSystemState.selectedNotes.add(note);
+		});
+		tonnetzSystemState.selectedNotes = new Set(tonnetzSystemState.selectedNotes); // Trigger reactivity
+	}
+
+	// Trigger debounced chord calculation and highlight update
+	debouncedChordCalculation(tonnetzSystemState);
+}
+
+function highlightNote(name: string, tonnetzSystemState) {
+	if (tonnetzSystemState.isShiftPressed) {
+		tonnetzSystemState.selectedNotes.has(name)
+			? tonnetzSystemState.selectedNotes.delete(name)
+			: tonnetzSystemState.selectedNotes.add(name);
+		tonnetzSystemState.selectedNotes = new Set(tonnetzSystemState.selectedNotes);
+		tonnetzSystemState.highlightedNote = null;
+	} else {
+		tonnetzSystemState.highlightedNote = name;
+		tonnetzSystemState.selectedNotes.clear();
+	}
+	debouncedChordCalculation(tonnetzSystemState);
+}
+
+function initTonnetz(tonnetzSystemState) {
+    let width = window.innerWidth;
+    let height = window.innerHeight;
+    const zoom = createZoomBehavior(CONFIG);
+
+    svg = d3
 		.select(container)
 		.append('svg')
 		.attr('width', width)
@@ -460,51 +927,18 @@ function initTonnetz(tonnetzSystemState) {
 			});
 		});
 
-	gridGroup = svg.append('g');
-	svg.call(zoom.transform, d3.zoomIdentity.translate(width / 2, height / 2));
-	createGrid();
+    gridGroup = svg.append('g');
+    svg.call(zoom.transform, d3.zoomIdentity.translate(width / 2, height / 2));
+    createGrid();
 
-	// Window resize handler
-	function handleResize() {
-		if (!svg) return;
+    // Add event listeners
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('keydown', tonnetzSystemState.handleKeyDown);
+    window.addEventListener('keyup', tonnetzSystemState.handleKeyUp);
+    window.addEventListener('mouseup', handleGlobalMouseUp);
 
-		// Get new dimensions
-		const containerElement = svg.node()?.parentElement;
-		if (!containerElement) return;
-
-		const newWidth = containerElement.clientWidth;
-		const newHeight = containerElement.clientHeight;
-
-		// Update SVG dimensions
-		svg.attr('width', newWidth).attr('height', newHeight);
-
-		// Update viewport with current transform
-		if (currentTransform) {
-			updateViewport(currentTransform, tonnetzSystemState);
-		}
-	}
-
-	// Keyboard event listeners for shift key
-	function handleKeyDown(e: KeyboardEvent, tonnetzSystemState) {
-		if (e.key === 'Shift') {
-			tonnetzSystemState.isShiftPressed = true;
-		}
-	}
-
-	function handleKeyUp(e: KeyboardEvent, tonnetzSystemState) {
-		if (e.key === 'Shift') {
-			tonnetzSystemState.isShiftPressed = false;
-		}
-	}
-
-	// Add event listeners
-	window.addEventListener('resize', handleResize);
-	window.addEventListener('keydown', tonnetzSystemState.handleKeyDown);
-	window.addEventListener('keyup', tonnetzSystemState.handleKeyUp);
-	window.addEventListener('mouseup', handleGlobalMouseUp);
-
-	// Cleanup function
-	const cleanup = function () {
+    // Cleanup function
+    const cleanup = function () {
 		window.removeEventListener('resize', handleResize);
 		window.removeEventListener('keydown', tonnetzSystemState.handleKeyDown);
 		window.removeEventListener('keyup', tonnetzSystemState.handleKeyUp);
@@ -512,7 +946,7 @@ function initTonnetz(tonnetzSystemState) {
 		// Clean up any other resources if needed
 	};
 
-	return cleanup;
+    return cleanup;
 }
 
 function isChordHighlighted(name: string, tonnetzSystemState) {
@@ -535,6 +969,18 @@ function isScaleHighlighted(name: string, tonnetzSystemState) {
 	return tonnetzSystemState.highlightedScaleNotes.has(name);
 }
 
+function isTriangleScaleHighlighted(row: number, col: number, isUp: boolean, tonnetzSystemState) {
+	if (tonnetzSystemState.highlightedScaleNotes.size === 0) return false;
+	const pos = { x: col * geometryConstants.spacing.col, y: row * geometryConstants.spacing.row };
+	const vertices = getTriangleVertices(pos, isUp);
+	return vertices.every(function (v) {
+		const { q, r } = cartesianToHex(v.x, v.y);
+		return tonnetzSystemState.highlightedScaleNotes.has(
+			getPitchWithOctave(q, r, tonnetzSystemState.currentRootNote, tonnetzSystemState)
+		);
+	});
+}
+
 // Visibility functions
 function isTriangleVisible(pos: { x: number; y: number }, transform: d3.ZoomTransform) {
 	return Utils.isTriangleVisible(pos, transform, CONFIG.baseTriangleSize);
@@ -546,6 +992,16 @@ function mod12(n: number) {
 
 function pitchClass(q: number, r: number, root = 0, tonnetzSystemState) {
 	return Utils.pitchClass(q, r, root, tonnetzSystemState.qInterval, tonnetzSystemState.rInterval);
+}
+
+// Throttled drag update to prevent excessive DOM updates
+function throttledDragUpdate(tonnetzSystemState) {
+	if (tonnetzSystemState.throttledDragTimeout) return;
+
+	tonnetzSystemState.throttledDragTimeout = setTimeout(function () {
+		updateHighlightsOnly(tonnetzSystemState);
+		tonnetzSystemState.throttledDragTimeout = null;
+	}, 16); // ~60fps throttle
 }
 
 function triggerUpdate() {
@@ -690,464 +1146,3 @@ function updateViewport(transform: d3.ZoomTransform, tonnetzSystemState) {
 		createVertexLabel(vertexLabels, pos, label);
 	});
 }
-
-// Coordinate lookup with caching
-const getNoteCoordsFromCache = function (noteName: string, tonnetzSystemState) {
-	const cacheKey = Utils.createCacheKey(
-		noteName,
-		tonnetzSystemState.currentRootNote,
-		tonnetzSystemState.qInterval,
-		tonnetzSystemState.rInterval
-	);
-
-	if (tonnetzSystemState.coordinateCache.has(cacheKey)) {
-		return tonnetzSystemState.coordinateCache.get(cacheKey)!;
-	}
-
-	const coords = Utils.findNoteCoordinates(
-		noteName,
-		tonnetzSystemState.currentRootNote,
-		tonnetzSystemState.qInterval,
-		tonnetzSystemState.rInterval,
-		getPitchWithOctave,
-		tonnetzSystemState
-	);
-	if (coords) {
-		tonnetzSystemState.coordinateCache.set(cacheKey, coords);
-	}
-	return coords;
-};
-
-// Triad combination generator
-const getTriadCombinations = function (arr: string[]) {
-	return Utils.getTriadCombinations(arr);
-};
-
-// Debounced chord calculation to prevent excessive computation
-const debouncedChordCalculation = function (tonnetzSystemState) {
-	if (tonnetzSystemState.debouncedChordTimeout) {
-		clearTimeout(tonnetzSystemState.debouncedChordTimeout);
-	}
-
-	tonnetzSystemState.debouncedChordTimeout = setTimeout(function () {
-		const allNotes = getAllHighlightedNotes(tonnetzSystemState);
-		const currentHash = JSON.stringify([...allNotes].sort());
-
-		// Only recalculate if notes have actually changed
-		if (currentHash !== tonnetzSystemState.lastSelectedNotesHash) {
-			tonnetzSystemState.lastSelectedNotesHash = currentHash;
-			tonnetzSystemState.highlightedChordsCache.clear();
-
-			if (allNotes.length >= 3) {
-				const combinations = getTriadCombinations(allNotes);
-				for (const combination of combinations) {
-					const formedChord = getChordFromNotes(combination, tonnetzSystemState);
-					if (formedChord) {
-						tonnetzSystemState.highlightedChordsCache.add(formedChord);
-					}
-				}
-			}
-
-			// Update highlights after calculation
-			requestAnimationFrame(function () {
-				return updateHighlightsOnly(tonnetzSystemState);
-			});
-		}
-	}, 16); // ~60fps throttle
-};
-
-// Throttled drag update to prevent excessive DOM updates
-const throttledDragUpdate = function (tonnetzSystemState) {
-	if (tonnetzSystemState.throttledDragTimeout) return;
-
-	tonnetzSystemState.throttledDragTimeout = setTimeout(function () {
-		updateHighlightsOnly(tonnetzSystemState);
-		tonnetzSystemState.throttledDragTimeout = null;
-	}, 16); // ~60fps throttle
-};
-
-// Utility functions
-const changeTonnetzPreset = function (presetName: string, tonnetzSystemState) {
-	const preset = CONFIG.tonnetz.presets[presetName as keyof typeof CONFIG.tonnetz.presets];
-	if (preset) {
-		tonnetzSystemState.currentTonnetzName = presetName;
-		tonnetzSystemState.qInterval = preset.qInterval;
-		tonnetzSystemState.rInterval = preset.rInterval;
-	}
-};
-
-// Highlight functions - simplified to work with notes only
-const highlightChord = function (chordType: string, tonnetzSystemState) {
-	// Get the notes that make up this chord
-	const chordNotes = getChordNotes(chordType, tonnetzSystemState);
-
-	if (tonnetzSystemState.isShiftPressed) {
-		// Toggle selection: if all notes are selected, deselect them; otherwise select all
-		const allSelected = chordNotes.every(function (note) {
-			return tonnetzSystemState.selectedNotes.has(note);
-		});
-
-		if (allSelected) {
-			// Deselect all chord notes
-			chordNotes.forEach(function (note) {
-				return tonnetzSystemState.selectedNotes.delete(note);
-			});
-		} else {
-			// Select all chord notes
-			chordNotes.forEach(function (note) {
-				return tonnetzSystemState.selectedNotes.add(note);
-			});
-		}
-		tonnetzSystemState.selectedNotes = new Set(tonnetzSystemState.selectedNotes); // Trigger reactivity
-		// Clear single note highlight when using multi-select
-		tonnetzSystemState.highlightedNote = null;
-	} else {
-		// Normal single selection: clear everything and select chord notes
-		tonnetzSystemState.highlightedNote = null;
-		tonnetzSystemState.selectedNotes.clear();
-		chordNotes.forEach(function (note) {
-			return tonnetzSystemState.selectedNotes.add(note);
-		});
-		tonnetzSystemState.selectedNotes = new Set(tonnetzSystemState.selectedNotes); // Trigger reactivity
-	}
-
-	// Trigger debounced chord calculation and highlight update
-	debouncedChordCalculation(tonnetzSystemState);
-};
-
-const highlightNote = function (name: string, tonnetzSystemState) {
-	if (tonnetzSystemState.isShiftPressed) {
-		tonnetzSystemState.selectedNotes.has(name)
-			? tonnetzSystemState.selectedNotes.delete(name)
-			: tonnetzSystemState.selectedNotes.add(name);
-		tonnetzSystemState.selectedNotes = new Set(tonnetzSystemState.selectedNotes);
-		tonnetzSystemState.highlightedNote = null;
-	} else {
-		tonnetzSystemState.highlightedNote = name;
-		tonnetzSystemState.selectedNotes.clear();
-	}
-	debouncedChordCalculation(tonnetzSystemState);
-};
-
-// Get notes that make up a chord
-const getChordNotes = function (chordType: string, tonnetzSystemState) {
-	if (!chordType || chordType === 'null') return [];
-
-	// Parse chord type (e.g., "C-up" or "F#-down")
-	const [chordName, orientation] = chordType.split('-');
-	if (!chordName || !orientation) return [];
-
-	// Find a triangle with this chord type to get its vertices
-	for (let row = -5; row <= 5; row++) {
-		for (let col = -5; col <= 5; col++) {
-			const isUp = (row + col) % 2 === 0;
-			if (getTriangleType(row, col, isUp) === chordType) {
-				const pos = {
-					x: col * geometryConstants.spacing.col,
-					y: row * geometryConstants.spacing.row
-				};
-				const vertices = getTriangleVertices(pos, isUp);
-				return vertices.map(function (v) {
-					const { q, r } = cartesianToHex(v.x, v.y);
-					return getPitchWithOctave(q, r, tonnetzSystemState.currentRootNote, tonnetzSystemState);
-				});
-			}
-		}
-	}
-	return [];
-};
-
-// Get chord type from a set of notes
-const getChordFromNotes = function (notes: string[], tonnetzSystemState) {
-	if (notes.length !== 3) return null;
-
-	// Search for triangles that contain exactly these 3 notes
-	for (let row = -10; row <= 10; row++) {
-		for (let col = -10; col <= 10; col++) {
-			const isUp = (row + col) % 2 === 0;
-			const pos = {
-				x: col * geometryConstants.spacing.col,
-				y: row * geometryConstants.spacing.row
-			};
-			const vertices = getTriangleVertices(pos, isUp);
-			const triangleNotes = vertices.map(function (v) {
-				const { q, r } = cartesianToHex(v.x, v.y);
-				return getPitchWithOctave(q, r, tonnetzSystemState.currentRootNote, tonnetzSystemState);
-			});
-
-			// Check if this triangle contains exactly the same notes
-			const sortedTriangleNotes = [...triangleNotes].sort();
-			const sortedInputNotes = [...notes].sort();
-
-			if (JSON.stringify(sortedTriangleNotes) === JSON.stringify(sortedInputNotes)) {
-				return getTriangleType(row, col, isUp);
-			}
-		}
-	}
-	return null;
-};
-
-// Legacy function kept for compatibility - redirects to optimized version
-const getCombinations = function (arr: string[], size: number) {
-	if (size === 3) {
-		return getTriadCombinations(arr);
-	}
-	// Fallback for other sizes (rarely used)
-	if (size > arr.length) return [];
-	if (size === 1)
-		return arr.map(function (item) {
-			return [item];
-		});
-	if (size === arr.length) return [arr];
-
-	const result: string[][] = [];
-	for (let i = 0; i <= arr.length - size; i++) {
-		const head = arr[i];
-		const tailCombinations = getCombinations(arr.slice(i + 1), size - 1);
-		for (const tail of tailCombinations) {
-			result.push([head, ...tail]);
-		}
-	}
-	return result;
-};
-
-const isTriangleScaleHighlighted = function (
-	row: number,
-	col: number,
-	isUp: boolean,
-	tonnetzSystemState
-) {
-	if (tonnetzSystemState.highlightedScaleNotes.size === 0) return false;
-	const pos = { x: col * geometryConstants.spacing.col, y: row * geometryConstants.spacing.row };
-	const vertices = getTriangleVertices(pos, isUp);
-	return vertices.every(function (v) {
-		const { q, r } = cartesianToHex(v.x, v.y);
-		return tonnetzSystemState.highlightedScaleNotes.has(
-			getPitchWithOctave(q, r, tonnetzSystemState.currentRootNote, tonnetzSystemState)
-		);
-	});
-};
-
-// Get all chords that are currently highlighted (formed by selected notes) - optimized with cache
-const getHighlightedChords = function (tonnetzSystemState) {
-	// Use cached results for better performance
-	if (tonnetzSystemState.highlightedChordsCache.size > 0) {
-		return Array.from(tonnetzSystemState.highlightedChordsCache);
-	}
-
-	// Trigger calculation if cache is empty and we have enough notes
-	const allNotes = getAllHighlightedNotes(tonnetzSystemState);
-	if (allNotes.length >= 3) {
-		debouncedChordCalculation(tonnetzSystemState);
-	}
-
-	return [];
-};
-
-// Get coordinate pattern from selected notes - optimized with caching
-const getCoordinatePattern = function (tonnetzSystemState) {
-	const allNotes = getAllHighlightedNotes(tonnetzSystemState);
-	if (allNotes.length === 0 && tonnetzSystemState.highlightedPatternNotes.size === 0) return '';
-
-	const notesToCheck =
-		tonnetzSystemState.highlightedPatternNotes.size > 0
-			? Array.from(tonnetzSystemState.highlightedPatternNotes)
-			: allNotes;
-
-	// Create cache key
-	const cacheKey = `${JSON.stringify([...notesToCheck].sort())}-${tonnetzSystemState.currentRootNote}-${tonnetzSystemState.qInterval}-${tonnetzSystemState.rInterval}`;
-
-	if (tonnetzSystemState.coordinatePatternCache.has(cacheKey)) {
-		return tonnetzSystemState.coordinatePatternCache.get(cacheKey)!;
-	}
-
-	// Find all note coordinates using optimized cache lookup
-	const noteCoords: Array<{ note: string; q: number; r: number }> = [];
-
-	for (const noteName of notesToCheck) {
-		const coords = getNoteCoordsFromCache(noteName, tonnetzSystemState);
-		if (coords) {
-			noteCoords.push({ note: noteName, ...coords });
-		}
-	}
-
-	if (noteCoords.length === 0) return '';
-
-	// Find root note: use (0,0) if it exists, otherwise use the first note
-	let rootCoords: { q: number; r: number } | null = null;
-
-	// First try to find (0,0) as root
-	const zeroZero = noteCoords.find(function (nc) {
-		return nc.q === 0 && nc.r === 0;
-	});
-	if (zeroZero) {
-		rootCoords = { q: 0, r: 0 };
-	} else {
-		// Otherwise use the first note in the list as root
-		rootCoords = { q: noteCoords[0].q, r: noteCoords[0].r };
-	}
-
-	// Calculate relative coordinates from root
-	const coordinates: Array<[number, number]> = [];
-	for (const { q, r } of noteCoords) {
-		coordinates.push([q - rootCoords.q, r - rootCoords.r]);
-	}
-
-	// Sort coordinates for consistent display
-	coordinates.sort(function (a, b) {
-		return a[0] === b[0] ? a[1] - b[1] : a[0] - b[0];
-	});
-
-	const result = JSON.stringify(coordinates);
-	tonnetzSystemState.coordinatePatternCache.set(cacheKey, result);
-	return result;
-};
-
-// Get coordinate for a single note - optimized with caching
-const getCoordinateForNote = function (noteName: string) {
-	const coords = getNoteCoordsFromCache(noteName, tonnetzSystemState);
-	if (coords) {
-		return `(${coords.q},${coords.r})`;
-	}
-	return '(?,?)';
-};
-
-const applyChordPattern = function (patternName: string, rootNote: string, tonnetzSystemState) {
-	const pattern = CONFIG.chordPatterns.presets[
-		patternName as keyof typeof CONFIG.chordPatterns.presets
-	] as [number, number][];
-	if (!pattern) return;
-	tonnetzSystemState.selectedChordPattern = patternName;
-	tonnetzSystemState.chordPatternRoot = rootNote;
-	tonnetzSystemState.highlightedPatternNotes = applyPattern(pattern, rootNote, tonnetzSystemState);
-
-	// Trigger chord detection for triangle highlighting
-	debouncedChordCalculation(tonnetzSystemState);
-
-	if (gridGroup) throttledDragUpdate(tonnetzSystemState);
-};
-
-const applyScale = function (scaleName: string, rootNote: string, tonnetzSystemState) {
-	const pattern = CONFIG.scales[scaleName as keyof typeof CONFIG.scales] as [number, number][];
-	if (!pattern?.length) return;
-	tonnetzSystemState.selectedScale = scaleName;
-	tonnetzSystemState.selectedMode = null;
-	tonnetzSystemState.scaleRoot = rootNote;
-	tonnetzSystemState.highlightedScaleNotes = applyPattern(pattern, rootNote, tonnetzSystemState);
-	if (gridGroup) throttledDragUpdate(tonnetzSystemState);
-};
-
-const applyMode = function (modeName: string, rootNote: string, tonnetzSystemState) {
-	const modeOffset = CONFIG.modes[modeName as keyof typeof CONFIG.modes];
-	const majorPattern = CONFIG.scales['Major Scale'];
-	if (modeOffset === undefined || !majorPattern) return;
-
-	const shiftedPattern = majorPattern.map(function ([q, r]) {
-		return [q + modeOffset, r] as [number, number];
-	});
-	tonnetzSystemState.selectedMode = modeName;
-	tonnetzSystemState.selectedScale = null;
-	tonnetzSystemState.scaleRoot = rootNote;
-	tonnetzSystemState.highlightedScaleNotes = applyPattern(
-		shiftedPattern,
-		rootNote,
-		tonnetzSystemState
-	);
-	if (gridGroup) throttledDragUpdate(tonnetzSystemState);
-};
-
-const clearChordPattern = function (tonnetzSystemState) {
-	tonnetzSystemState.selectedChordPattern = null;
-	tonnetzSystemState.chordPatternRoot = null;
-	tonnetzSystemState.highlightedPatternNotes.clear();
-
-	// Clear chord cache and trigger recalculation
-	tonnetzSystemState.highlightedChordsCache.clear();
-	tonnetzSystemState.lastSelectedNotesHash = '';
-	debouncedChordCalculation(tonnetzSystemState);
-
-	if (gridGroup) updateHighlightsOnly(tonnetzSystemState);
-};
-
-const clearScale = function (tonnetzSystemState) {
-	tonnetzSystemState.selectedScale = null;
-	tonnetzSystemState.selectedMode = null;
-	tonnetzSystemState.scaleRoot = null;
-	tonnetzSystemState.highlightedScaleNotes.clear();
-	if (gridGroup) updateHighlightsOnly(tonnetzSystemState);
-};
-
-const createLabel = function (
-	parent: d3.Selection<SVGGElement, unknown, null, undefined>,
-	gridPos: { x: number; y: number },
-	gridUp: boolean,
-	title: string,
-	subtitle: string
-) {
-	const center = getCentroid(getTriangleVertices(gridPos, gridUp));
-	[
-		{ text: title, y: center.y - CONFIG.label.spacing / 2, config: CONFIG.label.title },
-		{ text: subtitle, y: center.y + CONFIG.label.spacing / 2, config: CONFIG.label.subtitle }
-	].forEach(function ({ text, y, config }) {
-		return parent
-			.append('text')
-			.attr('x', center.x)
-			.attr('y', y)
-			.attr('text-anchor', 'middle')
-			.attr('dominant-baseline', 'middle')
-			.attr('font-size', config.fontSize)
-			.attr('font-family', config.fontFamily)
-			.attr('fill', config.color)
-			.style('pointer-events', 'none')
-			.text(text);
-	});
-};
-
-const getCurrentNotes = function getCurrentNotes(tonnetzSystemState) {
-	// First priority: Individual note selections
-	if (tonnetzSystemState.selectedNotes.size > 0) {
-		return Array.from(tonnetzSystemState.selectedNotes);
-	}
-	// Second priority: Single highlighted note
-	else if (tonnetzSystemState.highlightedNote) {
-		return [tonnetzSystemState.highlightedNote];
-	}
-	// Third priority: Highlighted chords (triangles)
-	else if (getHighlightedChords(tonnetzSystemState).length > 0) {
-		// Extract all chord tones from highlighted chords
-		const allChordTones = [];
-		for (const chord of getHighlightedChords(tonnetzSystemState)) {
-			const [root, orientation] = chord.split('-');
-			const isMinor = orientation === 'up'; // up triangles are minor, down are major
-			const chordTones = getChordTones(root, isMinor);
-			allChordTones.push(...chordTones);
-		}
-		// Remove duplicates
-		return [...new Set(allChordTones)];
-	}
-	// Last priority: Pattern notes
-	else if (tonnetzSystemState.highlightedPatternNotes.size > 0) {
-		return Array.from(tonnetzSystemState.highlightedPatternNotes);
-	}
-	return [];
-};
-
-const debouncedAudioUpdate = async function debouncedAudioUpdate() {
-	if (tonnetzSystemState.autoPlayTimeout) {
-		clearTimeout(tonnetzSystemState.autoPlayTimeout);
-	}
-
-	tonnetzSystemState.autoPlayTimeout = setTimeout(async function () {
-		const currentNotes = getCurrentNotes(tonnetzSystemState);
-		if (currentNotes.length > 0) {
-			try {
-				await initAudio();
-				await sustainNotes(currentNotes);
-				tonnetzSystemState.isPlaying = true;
-			} catch (error) {
-				console.error('Error in debouncedAudioUpdate:', error);
-				tonnetzSystemState.isPlaying = false;
-			}
-		}
-	}, 16);
-};
