@@ -145,7 +145,6 @@
 			tonnetzSystemState.cleanup();
 		};
 	});
-
 	// Global mouse up handler
 	function handleGlobalMouseUp(tonnetzSystemState) {
 		tonnetzSystemState.isDragging = false;
@@ -1232,7 +1231,7 @@
 			.text(label);
 	}
 
-	const createLabel = function (
+	function createLabel(
 		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
 		gridPos: { x: number; y: number },
 		gridUp: boolean,
@@ -1256,9 +1255,9 @@
 				.style('pointer-events', 'none')
 				.text(text);
 		});
-	};
+	}
 
-	const getCurrentNotes = (tonnetzSystemState) => {
+	function getCurrentNotes(tonnetzSystemState) {
 		// First priority: Individual note selections
 		if (tonnetzSystemState.selectedNotes.size > 0) {
 			return Array.from(tonnetzSystemState.selectedNotes);
@@ -1285,9 +1284,9 @@
 			return Array.from(tonnetzSystemState.highlightedPatternNotes);
 		}
 		return [];
-	};
+	}
 
-	const debouncedAudioUpdate = () => {
+	function debouncedAudioUpdate() {
 		if (tonnetzSystemState.autoPlayTimeout) {
 			clearTimeout(tonnetzSystemState.autoPlayTimeout);
 		}
@@ -1305,7 +1304,7 @@
 				}
 			}
 		}, 16);
-	};
+	}
 </script>
 
 <!-- Control Panel -->
