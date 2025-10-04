@@ -8,13 +8,7 @@
 	import './tonnetz.css';
 	import { createTonnetzSystem } from './tonnetzSystem.js';
 	import { EventSystem } from './tonnetzSystem.js';
-	import {
-		initAudio,
-		sustainNotes,
-		stopSustainedNotes,
-		updateAudioSettings,
-		disposeAudio
-	} from './simple-audio.js';
+	import { initAudio, sustainNotes, stopSustainedNotes, disposeAudio } from './simple-audio.js';
 	let container: HTMLDivElement;
 	let svg: d3.Selection<SVGSVGElement, unknown, null, undefined>;
 	let gridGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
@@ -237,14 +231,6 @@
 
 	function getCentroid(vertices: { x: number; y: number }[]) {
 		return Utils.getCentroid(vertices);
-	}
-
-	function isVisible(
-		pos: { x: number; y: number },
-		transform: d3.ZoomTransform,
-		bufferSize: number
-	) {
-		return Utils.isVisible(pos, transform, bufferSize);
 	}
 
 	function mod12(n: number) {
