@@ -40,12 +40,23 @@ export const cartesianToHex = (x, y, baseTriangleSize, TRI_HEIGHT) => {
 // Music theory functions
 export const mod12 = (n) => ((n % 12) + 12) % 12;
 
-export const pitchClass = (q, r, root, qInterval, rInterval) => 
+export const pitchClass = (q, r, root, qInterval, rInterval) =>
 	root + qInterval * q + rInterval * r;
 
-export const getPitchWithOctave = (q, r, rootNote, singleOctave, qInterval, rInterval, NOTES, NOTE_TO_SEMITONE) => {
+export const getPitchWithOctave = (
+	q,
+	r,
+	rootNote,
+	singleOctave,
+	qInterval,
+	rInterval,
+	NOTES,
+	NOTE_TO_SEMITONE
+) => {
 	const fullPitch = pitchClass(q, r, NOTE_TO_SEMITONE[rootNote], qInterval, rInterval);
-	return singleOctave ? NOTES[mod12(fullPitch)] : `${NOTES[mod12(fullPitch)]}${Math.floor(fullPitch / 12) + 4}`;
+	return singleOctave
+		? NOTES[mod12(fullPitch)]
+		: `${NOTES[mod12(fullPitch)]}${Math.floor(fullPitch / 12) + 4}`;
 };
 
 // Chord detection functions
@@ -61,7 +72,18 @@ export const getTriadCombinations = (arr) => {
 	return result;
 };
 
-export const getTriangleChord = (row, col, isUp, spacing, cartesianToHexFn, pitchClassFn, mod12Fn, currentRootNote, NOTE_TO_SEMITONE, NOTES) => {
+export const getTriangleChord = (
+	row,
+	col,
+	isUp,
+	spacing,
+	cartesianToHexFn,
+	pitchClassFn,
+	mod12Fn,
+	currentRootNote,
+	NOTE_TO_SEMITONE,
+	NOTES
+) => {
 	const pos = { x: col * spacing.col, y: row * spacing.row };
 	const vertices = getTriangleVertices(pos, isUp, spacing.col, spacing.row);
 	const pitchClasses = vertices.map((v) => {
@@ -93,40 +115,63 @@ export const getTriangleType = (row, col, isUp, getTriangleChordFn) => {
 };
 
 // Pattern application functions
-export const applyPattern = (pattern, rootNote, getNoteCoordsFromCacheFn, getPitchWithOctaveFn, currentRootNote) => {
-	const rootCoords = getNoteCoordsFromCacheFn(rootNote);
+export const applyPattern = (
+	pattern,
+	rootNote,
+	getNoteCoordsFromCacheFn,
+	getPitchWithOctaveFn,
+	currentRootNote,
+	tonnetzSystemState
+) => {
+	const rootCoords = getNoteCoordsFromCacheFn(rootNote, tonnetzSystemState);
 	if (!rootCoords) return new Set();
-	
+
 	const notes = new Set();
 	for (const [qOffset, rOffset] of pattern) {
-		const noteName = getPitchWithOctaveFn(rootCoords.q + qOffset, rootCoords.r + rOffset, currentRootNote);
+		const noteName = getPitchWithOctaveFn(
+			rootCoords.q + qOffset,
+			rootCoords.r + rOffset,
+			currentRootNote,
+			tonnetzSystemState // Pass the full state here
+		);
 		notes.add(noteName);
 	}
 	return notes;
 };
 
 // Cache management functions
-export const createCacheKey = (noteName, currentRootNote, qInterval, rInterval) => 
+export const createCacheKey = (noteName, currentRootNote, qInterval, rInterval) =>
 	`${noteName}-${currentRootNote}-${qInterval}-${rInterval}`;
 
-export const createCoordinatePatternCacheKey = (notesToCheck, currentRootNote, qInterval, rInterval) => 
-	`${JSON.stringify([...notesToCheck].sort())}-${currentRootNote}-${qInterval}-${rInterval}`;
+export const createCoordinatePatternCacheKey = (
+	notesToCheck,
+	currentRootNote,
+	qInterval,
+	rInterval
+) => `${JSON.stringify([...notesToCheck].sort())}-${currentRootNote}-${qInterval}-${rInterval}`;
 
 // Coordinate lookup with progressive search
-export const findNoteCoordinates = (noteName, currentRootNote, qInterval, rInterval, getPitchWithOctaveFn) => {
+export const findNoteCoordinates = (
+	noteName,
+	currentRootNote,
+	qInterval,
+	rInterval,
+	getPitchWithOctaveFn,
+	tonnetzSystemState
+) => {
 	const searchRanges = [5, 10, 20];
-	
+
 	for (const range of searchRanges) {
 		for (let q = -range; q <= range; q++) {
 			for (let r = -range; r <= range; r++) {
-				const foundNote = getPitchWithOctaveFn(q, r, currentRootNote);
+				const foundNote = getPitchWithOctaveFn(q, r, currentRootNote, tonnetzSystemState);
 				if (foundNote === noteName) {
 					return { q, r };
 				}
 			}
 		}
 	}
-	
+
 	return null;
 };
 

@@ -11,20 +11,20 @@ let sustainedNotes = new Map(); // Map of note -> voice for sustained playback
  */
 export const initAudio = async () => {
 	if (isInitialized) return;
-	
+
 	try {
 		// Start Tone.js audio context
 		if (Tone.context.state !== 'running') {
 			await Tone.start();
 		}
-		
+
 		// Create a simple polyphonic synthesizer
 		synth = new Tone.PolySynth(Tone.Synth, {
 			oscillator: { type: 'triangle' },
 			envelope: { attack: 0.1, decay: 0.2, sustain: 0.3, release: 1 },
 			volume: -12
 		}).toDestination();
-		
+
 		isInitialized = true;
 		console.log('Audio initialized successfully');
 	} catch (error) {
@@ -40,24 +40,24 @@ export const sustainNotes = async (notes) => {
 	if (!isInitialized) {
 		await initAudio();
 	}
-	
+
 	if (!synth || !notes) return;
-	
+
 	// Convert notes to proper format (add octave if missing) - optimized
-	const toneNotes = notes.map(note => 
-		note.match(/\d/) ? note : `${note}4`
-	);
-	
+	const toneNotes = notes.map((note) => (note.match(/\d/) ? note : `${note}4`));
+
 	// Quick check if notes have actually changed to avoid unnecessary work
 	const newNotesSet = new Set(toneNotes);
 	const currentNotesSet = new Set(sustainedNotes.keys());
-	
+
 	// Only proceed if there are actual changes
-	if (newNotesSet.size === currentNotesSet.size && 
-		[...newNotesSet].every(note => currentNotesSet.has(note))) {
+	if (
+		newNotesSet.size === currentNotesSet.size &&
+		[...newNotesSet].every((note) => currentNotesSet.has(note))
+	) {
 		return; // No changes, skip processing
 	}
-	
+
 	// Stop notes that are no longer selected
 	for (const note of currentNotesSet) {
 		if (!newNotesSet.has(note)) {
@@ -65,7 +65,7 @@ export const sustainNotes = async (notes) => {
 			sustainedNotes.delete(note);
 		}
 	}
-	
+
 	// Start new notes that aren't already playing
 	for (const note of newNotesSet) {
 		if (!currentNotesSet.has(note)) {
@@ -73,7 +73,7 @@ export const sustainNotes = async (notes) => {
 			sustainedNotes.set(note, true);
 		}
 	}
-	
+
 	currentlyPlayingNotes = newNotesSet;
 };
 
@@ -122,7 +122,7 @@ export const updateAudioSettings = (settings) => {
 		// Simple instrument switching by changing oscillator type
 		const oscTypes = {
 			synth: 'triangle',
-			piano: 'sine', 
+			piano: 'sine',
 			guitar: 'sawtooth',
 			bass: 'square'
 		};

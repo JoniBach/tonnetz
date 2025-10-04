@@ -4,10 +4,49 @@ import * as d3 from 'd3';
 type EventHandler<T = any> = (data: T) => void;
 type EventHandlers = Map<string, Set<EventHandler>>;
 
-// Add these at the top of the file, outside createTonnetzSystem
-let audioContext: AudioContext | null = null;
-const activeOscillators = new Set<OscillatorNode>();
-const activeAudioBuffers = new Set<AudioBufferSourceNode>();
+// Audio context state
+interface AudioState {
+	audioContext: AudioContext | null;
+	activeOscillators: Set<OscillatorNode>;
+	activeAudioBuffers: Set<AudioBufferSourceNode>;
+}
+
+// Main application state
+interface TonnetzState {
+	currentRootNote: number;
+	showMusicalLabels: boolean;
+	singleOctave: boolean;
+	currentTonnetzName: string;
+	qInterval: number;
+	rInterval: number;
+	highlightedNote: string | null;
+	isDragging: boolean;
+	isShiftPressed: boolean;
+	selectedNotes: Set<string>;
+	selectedChordPattern: string | null;
+	chordPatternRoot: string | null;
+	highlightedPatternNotes: Set<string>;
+	selectedScale: string | null;
+	selectedMode: string | null;
+	scaleRoot: string | null;
+	highlightedScaleNotes: Set<string>;
+	coordinateCache: Map<string, { q: number; r: number }>;
+	coordinatePatternCache: Map<string, string>;
+	highlightedChordsCache: Set<string>;
+	lastSelectedNotesHash: string;
+	debouncedChordTimeout: ReturnType<typeof setTimeout> | null;
+	throttledDragTimeout: ReturnType<typeof setTimeout> | null;
+	audioState: AudioState;
+	autoPlayTimeout: ReturnType<typeof setTimeout> | null;
+	isPlaying: boolean;
+}
+
+// Initialize audio state
+const createAudioState = (): AudioState => ({
+	audioContext: null,
+	activeOscillators: new Set<OscillatorNode>(),
+	activeAudioBuffers: new Set<AudioBufferSourceNode>()
+});
 
 class EventSystem {
 	private handlers: EventHandlers = new Map();
@@ -59,11 +98,8 @@ class EventSystem {
 
 export const createTonnetzSystem = (config) => {
 	const eventSystem = EventSystem.getInstance();
-	let debouncedChordTimeout: ReturnType<typeof setTimeout> | null = null;
-	let throttledDragTimeout: ReturnType<typeof setTimeout> | null = null;
 
-	const state = {
-		// Your existing state
+	const createState = (): TonnetzState => ({
 		currentRootNote: config.music.rootNote,
 		showMusicalLabels: true,
 		singleOctave: config.music.singleOctave,
@@ -88,87 +124,108 @@ export const createTonnetzSystem = (config) => {
 		lastSelectedNotesHash: '',
 		debouncedChordTimeout: null,
 		throttledDragTimeout: null,
+		audioState: createAudioState(),
+		autoPlayTimeout: null,
+		isPlaying: false
 		// ... rest of your state
+	});
 
-		// Event handlers
-		handleMouseDown: (event: MouseEvent) => {
-			if (event.button !== 0) return;
-			eventSystem.emit('MOUSE_DOWN', {
+	// Event handlers
+	const handleMouseDown = (state: TonnetzState, event: MouseEvent) => {
+		if (event.button !== 0) return;
+		eventSystem.emit('MOUSE_DOWN', {
+			x: event.clientX,
+			y: event.clientY,
+			target: event.target,
+			shiftKey: event.shiftKey
+		});
+	};
+
+	const handleGlobalMouseUp = (state: TonnetzState, event: MouseEvent) => {
+		if (state.isDragging) {
+			state.isDragging = false;
+			eventSystem.emit('MOUSE_UP', {
 				x: event.clientX,
 				y: event.clientY,
-				target: event.target,
-				shiftKey: event.shiftKey
+				target: event.target
 			});
-		},
-
-		handleGlobalMouseUp: (event: MouseEvent) => {
-			if (state.isDragging) {
-				state.isDragging = false;
-				eventSystem.emit('MOUSE_UP', {
-					x: event.clientX,
-					y: event.clientY,
-					target: event.target
-				});
-			}
-		},
-
-		handleKeyDown: (event: KeyboardEvent) => {
-			if (event.key === 'Shift') {
-				state.isShiftPressed = true;
-			}
-			eventSystem.emit('KEY_DOWN', { key: event.key });
-		},
-
-		handleKeyUp: (event: KeyboardEvent) => {
-			if (event.key === 'Shift') {
-				state.isShiftPressed = false;
-			}
-			eventSystem.emit('KEY_UP', { key: event.key });
-		},
-
-		// Setup function to be called from component's onMount
-		setupEventListeners: (container: HTMLElement, svg: SVGSVGElement) => {
-			// Set up global listeners
-			window.addEventListener('mouseup', state.handleGlobalMouseUp);
-			window.addEventListener('keydown', state.handleKeyDown);
-			window.addEventListener('keyup', state.handleKeyUp);
-
-			// Set up SVG listeners
-			d3.select(svg).on('mousedown', state.handleMouseDown);
-
-			// Set up reactive updates
-			const unsubscribe = eventSystem.on('STATE_UPDATE', () => {
-				// This will be triggered whenever state changes
-				eventSystem.emit('UPDATE_VIEW');
-			});
-
-			// Return cleanup function
-			return () => {
-				window.removeEventListener('mouseup', state.handleGlobalMouseUp);
-				window.removeEventListener('keydown', state.handleKeyDown);
-				window.removeEventListener('keyup', state.handleKeyUp);
-				d3.select(svg).on('mousedown', null);
-				unsubscribe();
-			};
-		},
-
-		// Cleanup
-		cleanup: () => {
-			// Stop all audio
-			if (typeof Tone !== 'undefined') {
-				Tone.Transport.cancel();
-				if (window.audioManager) {
-					window.audioManager.stop();
-				}
-			}
-
-			// Clear any timeouts
-			if (state.debouncedChordTimeout) clearTimeout(state.debouncedChordTimeout);
-			if (state.throttledDragTimeout) clearTimeout(state.throttledDragTimeout);
 		}
 	};
 
-	return state;
+	const handleKeyDown = (state: TonnetzState, event: KeyboardEvent) => {
+		if (event.key === 'Shift') {
+			state.isShiftPressed = true;
+		}
+		eventSystem.emit('KEY_DOWN', { key: event.key });
+		console.log('shiftdown');
+	};
+
+	const handleKeyUp = (state: TonnetzState, event: KeyboardEvent) => {
+		if (event.key === 'Shift') {
+			state.isShiftPressed = false;
+		}
+		eventSystem.emit('KEY_UP', { key: event.key });
+		console.log('shiftup');
+	};
+
+	// Setup function to be called from component's onMount
+	const setupEventListeners = (state: TonnetzState, container: HTMLElement, svg: SVGSVGElement) => {
+		// Create bound event handlers
+		const boundHandleMouseUp = (e: MouseEvent) => handleGlobalMouseUp(state, e);
+		const boundHandleKeyDown = (e: KeyboardEvent) => handleKeyDown(state, e);
+		const boundHandleKeyUp = (e: KeyboardEvent) => handleKeyUp(state, e);
+		const boundHandleMouseDown = (e: MouseEvent) => handleMouseDown(state, e);
+
+		// Set up global listeners
+		window.addEventListener('mouseup', boundHandleMouseUp);
+		window.addEventListener('keydown', boundHandleKeyDown);
+		window.addEventListener('keyup', boundHandleKeyUp);
+
+		// Set up SVG listeners
+		d3.select(svg).on('mousedown', boundHandleMouseDown);
+
+		// Set up reactive updates
+		const unsubscribe = eventSystem.on('STATE_UPDATE', () => {
+			eventSystem.emit('UPDATE_VIEW');
+		});
+
+		// Return cleanup function
+		return () => {
+			window.removeEventListener('mouseup', boundHandleMouseUp);
+			window.removeEventListener('keydown', boundHandleKeyDown);
+			window.removeEventListener('keyup', boundHandleKeyUp);
+			d3.select(svg).on('mousedown', null);
+			unsubscribe();
+		};
+	};
+
+	const cleanup = (state: TonnetzState) => {
+		// Stop all audio
+		if (typeof Tone !== 'undefined') {
+			Tone.Transport.cancel();
+			if (window.audioManager) {
+				window.audioManager.stop();
+			}
+		}
+
+		// Clear any timeouts
+		if (state.debouncedChordTimeout) clearTimeout(state.debouncedChordTimeout);
+		if (state.throttledDragTimeout) clearTimeout(state.throttledDragTimeout);
+	};
+	// Create the state instance
+	const state = createState();
+
+	// Return the state along with bound methods
+	return {
+		...state,
+		handleMouseDown: (e: MouseEvent) => handleMouseDown(state, e),
+		handleGlobalMouseUp: (e: MouseEvent) => handleGlobalMouseUp(state, e),
+		handleKeyDown: (e: KeyboardEvent) => handleKeyDown(state, e),
+		handleKeyUp: (e: KeyboardEvent) => handleKeyUp(state, e),
+		setupEventListeners: (container: HTMLElement, svg: SVGSVGElement) =>
+			setupEventListeners(state, container, svg),
+		cleanup: () => cleanup(state)
+	};
 };
 
 // Export EventSystem for use in components
