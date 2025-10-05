@@ -7,23 +7,22 @@
 	const size = 50;
 	const range = 4;
 
-	// fallback for SSR
-	let width = 800;
+	let width = 800; // SSR fallback
 	let height = 600;
 
-	function drawGrid() {
-		if (!svgEl) return;
+	let gridLayer: d3.Selection<SVGGElement, unknown, null, undefined>;
 
-		// Get latest state from store
+	// Draw grid elements once (positions only)
+	function drawGrid() {
+		if (!gridLayer) return;
+
 		let state: any;
 		gridStore.subscribe((s) => (state = s))();
 
 		const { x: xScale, y: yScale } = gridStore.computeScales(width, height);
 
-		const svg = d3.select(svgEl);
-
-		// Draw triangles
-		svg
+		// Triangles
+		gridLayer
 			.selectAll<SVGPolygonElement, Triangle>('polygon')
 			.data(state.triangles, (d) => d.points.sort().join('|'))
 			.join('polygon')
@@ -42,8 +41,8 @@
 			.style('cursor', 'pointer')
 			.on('click', (_, d) => gridStore.highlightTriangle(d.points.sort().join('|')));
 
-		// Draw points
-		svg
+		// Points
+		gridLayer
 			.selectAll<SVGCircleElement, Point>('circle')
 			.data(Array.from(state.points.values()), (d) => `${d.q},${d.r}`)
 			.join('circle')
@@ -55,8 +54,8 @@
 			.style('cursor', 'pointer')
 			.on('click', (_, d) => gridStore.selectNote(d.note));
 
-		// Draw labels
-		svg
+		// Labels
+		gridLayer
 			.selectAll<SVGTextElement, Point>('text')
 			.data(Array.from(state.points.values()), (d) => `${d.q},${d.r}`)
 			.join('text')
@@ -68,13 +67,35 @@
 	}
 
 	onMount(() => {
-		// Now safe to use window
 		width = window.innerWidth;
 		height = window.innerHeight;
 
 		gridStore.generateGrid(range, size);
 
-		// Draw grid initially and subscribe for updates
+		const svg = d3.select(svgEl);
+		svg.selectAll('*').remove(); // clear any previous content
+
+		// Create <g> container for pan/zoom
+		gridLayer = svg.append('g').attr('class', 'grid-layer');
+
+		// Draw the grid once
+		drawGrid();
+
+		// D3 Zoom - right-click drag + scroll wheel
+		const zoom = d3
+			.zoom<SVGSVGElement, unknown>()
+			.scaleExtent([0.5, 4])
+			.filter((event) => event.button === 2 || event.type === 'wheel') // right-click or scroll only
+			.on('zoom', (event) => {
+				gridLayer.attr('transform', event.transform.toString());
+			});
+
+		svg.call(zoom);
+
+		// Disable context menu for right-click
+		svgEl.addEventListener('contextmenu', (e) => e.preventDefault());
+
+		// Redraw only on store updates (selection/triangle highlight)
 		gridStore.subscribe(drawGrid);
 
 		const resizeHandler = () => {
@@ -84,7 +105,6 @@
 		};
 
 		window.addEventListener('resize', resizeHandler);
-
 		return () => window.removeEventListener('resize', resizeHandler);
 	});
 </script>

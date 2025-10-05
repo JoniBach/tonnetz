@@ -2,7 +2,6 @@ import { writable } from 'svelte/store';
 
 const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
-// Axial to Cartesian (flat-top hex for vertical triangles)
 function axialToCartesian(q: number, r: number, size: number) {
 	const x = size * Math.sqrt(3) * (q + r / 2);
 	const y = size * 1.5 * r;
@@ -46,13 +45,11 @@ function createGridStore() {
 			}
 
 			pointsMap.forEach(({ q, r }) => {
-				// Upward triangle
 				const up1 = `${q},${r + 1}`;
 				const up2 = `${q + 1},${r}`;
 				if (pointsMap.has(up1) && pointsMap.has(up2))
 					trianglesArr.push({ points: [`${q},${r}`, up1, up2], up: true });
 
-				// Downward triangle
 				const down1 = `${q},${r - 1}`;
 				const down2 = `${q - 1},${r}`;
 				if (pointsMap.has(down1) && pointsMap.has(down2))
@@ -92,7 +89,6 @@ function createGridStore() {
 			return triangle.points.map((id) => pointsMap.get(id)).filter(Boolean) as Point[];
 		},
 
-		// Compute uniform scales for given width/height
 		computeScales(width: number, height: number, padding = 50) {
 			const pointsArray = Array.from(pointsMap.values());
 			const xs = pointsArray.map((p) => p.x);
