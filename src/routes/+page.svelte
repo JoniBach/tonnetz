@@ -49,6 +49,10 @@
 		isPlaying: boolean;
 		isMidiPlaying: boolean;
 		gridGroup: d3.Selection<SVGGElement, unknown, null, undefined> | null;
+		currentTransform: d3.ZoomTransform;
+		synth: Tone.Synth;
+		isInitialized: boolean;
+		currentlyPlayingNotes: Set<string>;
 	}
 
 	// Initialize audio state
@@ -133,8 +137,11 @@
 			autoPlayTimeout: null,
 			isPlaying: false,
 			isMidiPlaying: false,
-			midiPlayer: null,
-			gridGroup: null
+			gridGroup: null,
+			currentTransform: d3.zoomIdentity,
+			synth: null,
+			isInitialized: false,
+			currentlyPlayingNotes: new Set()
 		});
 
 		const state = createState();
@@ -209,11 +216,9 @@
 	let container: HTMLDivElement;
 	let svg: d3.Selection<SVGSVGElement, unknown, null, undefined>;
 
-	// let tonnetzSystemState.gridGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
-	// let tonnetzSystemState.currentTransform: d3.ZoomTransform = d3.zoomIdentity;
 	// let tonnetzSystemState.synth = null;
 	// let tonnetzSystemState.isInitialized = false;
-	let currentlyPlayingNotes = new Set();
+	// let tonnetzSystemState.currentlyPlayingNotes = new Set();
 	let sustainedNotes = new Map(); // Map of note -> voice for sustained playback
 
 	const geometryConstants = createGeometryConstants(CONFIG);
@@ -242,16 +247,16 @@
 			const hasPattern = tonnetzSystemState.highlightedPatternNotes?.size > 0;
 
 			if (hasHighlighted || hasSelected || hasPattern) {
-				debouncedAudioUpdate();
+				debouncedAudioUpdate(tonnetzSystemState);
 			} else if (tonnetzSystemState.isPlaying) {
-				stopSustainedNotes();
+				stopSustainedNotes(tonnetzSystemState);
 				tonnetzSystemState.isPlaying = false;
 			}
 		});
 	});
 
 	onDestroy(() => {
-		disposeAudio();
+		disposeAudio(tonnetzSystemState);
 	});
 
 	onMount(function () {
@@ -362,6 +367,31 @@
 		return Utils.getCentroid(vertices);
 	}
 
+	function getTriangleVertices(pos: { x: number; y: number }, up: boolean) {
+		return Utils.getTriangleVertices(
+			pos,
+			up,
+			geometryConstants.halfSize,
+			geometryConstants.triHeight
+		);
+	}
+
+	function getVisibleBounds(transform: d3.ZoomTransform) {
+		return Utils.getVisibleBounds(transform, CONFIG.baseTriangleSize, geometryConstants.spacing);
+	}
+
+	function isTriangleVisible(pos: { x: number; y: number }, transform: d3.ZoomTransform) {
+		return Utils.isTriangleVisible(pos, transform, CONFIG.baseTriangleSize);
+	}
+
+	function mod12(n: number) {
+		return Utils.mod12(n);
+	}
+
+	function pitchClass(q: number, r: number, root = 0, tonnetzSystemState) {
+		return Utils.pitchClass(q, r, root, tonnetzSystemState.qInterval, tonnetzSystemState.rInterval);
+	}
+
 	function getChordTones(root: string, isMinor: boolean): string[] {
 		// Define the intervals for major and minor triads
 		const majorIntervals = [0, 4, 7]; // Root, Major 3rd, Perfect 5th
@@ -390,35 +420,10 @@
 			.filter((note) => note !== ''); // Filter out any invalid notes
 	}
 
-	function getTriangleVertices(pos: { x: number; y: number }, up: boolean) {
-		return Utils.getTriangleVertices(
-			pos,
-			up,
-			geometryConstants.halfSize,
-			geometryConstants.triHeight
-		);
-	}
-
-	function getVisibleBounds(transform: d3.ZoomTransform) {
-		return Utils.getVisibleBounds(transform, CONFIG.baseTriangleSize, geometryConstants.spacing);
-	}
-
-	function isTriangleVisible(pos: { x: number; y: number }, transform: d3.ZoomTransform) {
-		return Utils.isTriangleVisible(pos, transform, CONFIG.baseTriangleSize);
-	}
-
-	function mod12(n: number) {
-		return Utils.mod12(n);
-	}
-
-	function pitchClass(q: number, r: number, root = 0, tonnetzSystemState) {
-		return Utils.pitchClass(q, r, root, tonnetzSystemState.qInterval, tonnetzSystemState.rInterval);
-	}
-
 	/**
 	 * Initialize Tone.js audio context
 	 */
-	const initAudio = async () => {
+	const initAudio = async (tonnetzSystemState) => {
 		if (tonnetzSystemState.isInitialized) return;
 
 		try {
@@ -445,9 +450,9 @@
 	 * Start sustained playback of notes (continuous until stopped)
 	 * @param {string[]} notes - Array of note names to sustain
 	 */
-	const sustainNotes = async (notes) => {
+	const sustainNotes = async (notes, tonnetzSystemState) => {
 		if (!tonnetzSystemState.isInitialized) {
-			await initAudio();
+			await initAudio(tonnetzSystemState);
 		}
 
 		if (!tonnetzSystemState.synth || !notes) return;
@@ -483,13 +488,13 @@
 			}
 		}
 
-		currentlyPlayingNotes = newNotesSet;
+		tonnetzSystemState.currentlyPlayingNotes = newNotesSet;
 	};
 
 	/**
 	 * Stop all sustained notes
 	 */
-	const stopSustainedNotes = () => {
+	const stopSustainedNotes = (tonnetzSystemState) => {
 		for (const [note] of sustainedNotes.entries()) {
 			try {
 				tonnetzSystemState.synth.triggerRelease(note);
@@ -498,10 +503,10 @@
 			}
 		}
 		sustainedNotes.clear();
-		currentlyPlayingNotes.clear();
+		tonnetzSystemState.currentlyPlayingNotes.clear();
 	};
 
-	const disposeAudio = () => {
+	const disposeAudio = (tonnetzSystemState) => {
 		if (tonnetzSystemState.synth) {
 			tonnetzSystemState.synth.dispose();
 			tonnetzSystemState.synth = null;
@@ -664,7 +669,7 @@
 			});
 	}
 
-	function createGrid() {
+	function createGrid(tonnetzSystemState) {
 		updateViewport(tonnetzSystemState.currentTransform, tonnetzSystemState);
 	}
 
@@ -747,7 +752,8 @@
 		pos: { x: number; y: number },
 		up: boolean,
 		row: number,
-		col: number
+		col: number,
+		tonnetzSystemState
 	) {
 		const vertices = getTriangleVertices(pos, up);
 		let innerTriangleElement: d3.Selection<SVGPolygonElement, unknown, null, undefined> | null =
@@ -824,7 +830,7 @@
 			.text(label);
 	}
 
-	function createZoomBehavior(config: any) {
+	function createZoomBehavior(config: any, tonnetzSystemState) {
 		return d3
 			.zoom()
 			.scaleExtent([1 / config.zoomRange, config.zoomRange])
@@ -851,7 +857,7 @@
 			});
 	}
 
-	function debouncedAudioUpdate() {
+	function debouncedAudioUpdate(tonnetzSystemState) {
 		if (tonnetzSystemState.autoPlayTimeout) {
 			clearTimeout(tonnetzSystemState.autoPlayTimeout);
 		}
@@ -860,8 +866,8 @@
 			const currentNotes = getCurrentNotes(tonnetzSystemState);
 			if (currentNotes.length > 0) {
 				try {
-					await initAudio();
-					await sustainNotes(currentNotes);
+					await initAudio(tonnetzSystemState);
+					await sustainNotes(currentNotes, tonnetzSystemState);
 					tonnetzSystemState.isPlaying = true;
 				} catch (error) {
 					console.error('Error in debouncedAudioUpdate:', error);
@@ -953,29 +959,7 @@
 		return [];
 	}
 
-	function getCombinations(arr: string[], size: number) {
-		if (size === 3) {
-			return getTriadCombinations(arr);
-		}
-		if (size > arr.length) return [];
-		if (size === 1)
-			return arr.map(function (item) {
-				return [item];
-			});
-		if (size === arr.length) return [arr];
-
-		const result: string[][] = [];
-		for (let i = 0; i <= arr.length - size; i++) {
-			const head = arr[i];
-			const tailCombinations = getCombinations(arr.slice(i + 1), size - 1);
-			for (const tail of tailCombinations) {
-				result.push([head, ...tail]);
-			}
-		}
-		return result;
-	}
-
-	function getCoordinateForNote(noteName: string) {
+	function getCoordinateForNote(noteName: string, tonnetzSystemState) {
 		const coords = getNoteCoordsFromCache(noteName, tonnetzSystemState);
 		if (coords) {
 			return `(${coords.q},${coords.r})`;
@@ -1142,18 +1126,6 @@
 		tonnetzSystemState.isDragging = false;
 	}
 
-	function handleKeyDown(e: KeyboardEvent, tonnetzSystemState) {
-		if (e.key === 'Shift') {
-			tonnetzSystemState.isShiftPressed = true;
-		}
-	}
-
-	function handleKeyUp(e: KeyboardEvent, tonnetzSystemState) {
-		if (e.key === 'Shift') {
-			tonnetzSystemState.isShiftPressed = false;
-		}
-	}
-
 	function handleMouseDown(
 		event: MouseEvent,
 		type: 'note' | 'chord',
@@ -1296,7 +1268,7 @@
 	function initTonnetz(tonnetzSystemState) {
 		let width = window.innerWidth;
 		let height = window.innerHeight;
-		const zoom = createZoomBehavior(CONFIG);
+		const zoom = createZoomBehavior(CONFIG, tonnetzSystemState);
 
 		svg = d3
 			.select(container)
@@ -1323,7 +1295,7 @@
 
 		tonnetzSystemState.gridGroup = svg.append('g');
 		svg.call(zoom.transform, d3.zoomIdentity.translate(width / 2, height / 2));
-		createGrid();
+		createGrid(tonnetzSystemState);
 
 		window.addEventListener('resize', handleResize);
 		window.addEventListener('keydown', tonnetzSystemState.handleKeyDown);
@@ -1495,7 +1467,7 @@
 		}
 
 		triangleData.forEach(function ({ pos, isUp, row, col }) {
-			createTriangleBase(triangles, innerTriangles, pos, isUp, row, col);
+			createTriangleBase(triangles, innerTriangles, pos, isUp, row, col, tonnetzSystemState);
 			if (isTriangleVisible(pos, transform)) {
 				const info = tonnetzSystemState.showMusicalLabels
 					? getTriangleChord(row, col, isUp, tonnetzSystemState)

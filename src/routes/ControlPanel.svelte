@@ -29,7 +29,6 @@
 		volume: CONFIG.audio.volume,
 		tempo: CONFIG.audio.tempo
 	});
-	let fileInput = $state(null);
 
 	// Derived state for highlighted chords
 	const highlightedChords = $derived(() => getHighlightedChords(tonnetzSystemState));
@@ -59,7 +58,7 @@
 			<span
 				>Playing: {tonnetzSystemState.showMusicalLabels
 					? tonnetzSystemState.highlightedNote
-					: getCoordinateForNote(tonnetzSystemState.highlightedNote)}</span
+					: getCoordinateForNote(tonnetzSystemState.highlightedNote, tonnetzSystemState)}</span
 			>
 		{:else if tonnetzSystemState.selectedNotes.size > 0}
 			<span
@@ -108,30 +107,6 @@
 				<option value="guitar">Guitar</option>
 				<option value="bass">Bass</option>
 			</select>
-		</label>
-
-		<label>
-			Tempo:
-			<input
-				type="range"
-				min="60"
-				max="200"
-				bind:value={audioConfig.tempo}
-				onchange={triggerUpdate}
-			/>
-			<span class="tempo-display">{audioConfig.tempo} BPM</span>
-		</label>
-
-		<label>
-			Volume:
-			<input
-				type="range"
-				min="-40"
-				max="0"
-				bind:value={audioConfig.volume}
-				onchange={triggerUpdate}
-			/>
-			<span class="volume-display">{audioConfig.volume} dB</span>
 		</label>
 	</div>
 
