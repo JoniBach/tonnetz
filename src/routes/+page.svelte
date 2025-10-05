@@ -1430,55 +1430,59 @@
 		const svgElement = gridGroup.node();
 		if (!svgElement) return;
 
-		const triangles = svgElement.querySelectorAll(
-			'polygon[data-triangle-type]'
-		) as NodeListOf<SVGPolygonElement>;
-		for (const triangle of triangles) {
-			const triangleType = triangle.getAttribute('data-triangle-type');
-			if (!triangleType) continue;
+		// Batch DOM reads
+		const triangles = Array.from(svgElement.querySelectorAll('polygon[data-triangle-type]'));
+		const vertices = Array.from(svgElement.querySelectorAll('circle[data-note]'));
 
-			const isChordHighlight = isChordHighlighted(triangleType, tonnetzSystemState);
-			triangle.classList.toggle('highlighted-triangle', isChordHighlight);
+		// Batch DOM writes
+		requestAnimationFrame(() => {
+			// Process triangles
+			for (const triangle of triangles) {
+				const triangleType = triangle.getAttribute('data-triangle-type');
+				if (!triangleType) continue;
 
-			let isScaleHighlight = false;
-			if (tonnetzSystemState.highlightedScaleNotes.size > 0) {
-				const points = triangle.getAttribute('points');
-				if (points) {
-					const coords = points.split(' ').map(function (point: string) {
-						const [x, y] = point.split(',').map(Number);
-						return { x, y };
-					});
+				const isChordHighlight = isChordHighlighted(triangleType, tonnetzSystemState);
+				triangle.classList.toggle('highlighted-triangle', isChordHighlight);
 
-					isScaleHighlight = coords.every(function (coord) {
-						const { q, r } = cartesianToHex(coord.x, coord.y);
-						const noteName = getPitchWithOctave(
-							q,
-							r,
-							tonnetzSystemState.currentRootNote,
-							tonnetzSystemState
-						);
-						return tonnetzSystemState.highlightedScaleNotes.has(noteName);
-					});
+				// Only check scale highlights if needed
+				if (tonnetzSystemState.highlightedScaleNotes.size > 0) {
+					const points = triangle.getAttribute('points');
+					if (points) {
+						const coords = points.split(' ').map((point) => {
+							const [x, y] = point.split(',').map(Number);
+							return { x, y };
+						});
+
+						const isScaleHighlight = coords.every((coord) => {
+							const { q, r } = cartesianToHex(coord.x, coord.y);
+							const noteName = getPitchWithOctave(
+								q,
+								r,
+								tonnetzSystemState.currentRootNote,
+								tonnetzSystemState
+							);
+							return tonnetzSystemState.highlightedScaleNotes.has(noteName);
+						});
+						triangle.classList.toggle('scale-highlight', isScaleHighlight);
+					}
 				}
 			}
-			triangle.classList.toggle('scale-highlight', isScaleHighlight);
-		}
 
-		const vertices = svgElement.querySelectorAll(
-			'circle[data-note]'
-		) as NodeListOf<SVGCircleElement>;
-		for (const vertex of vertices) {
-			const noteName = vertex.getAttribute('data-note');
-			if (!noteName) continue;
+			// Process vertices
+			for (const vertex of vertices) {
+				const noteName = vertex.getAttribute('data-note');
+				if (!noteName) continue;
 
-			const isNoteHighlight = isNoteHighlighted(noteName, tonnetzSystemState);
-			vertex.classList.toggle('highlighted-vertex', isNoteHighlight);
+				const isNoteHighlight = isNoteHighlighted(noteName, tonnetzSystemState);
+				const isScaleHighlight =
+					tonnetzSystemState.highlightedScaleNotes.size > 0 &&
+					isScaleHighlighted(noteName, tonnetzSystemState);
 
-			const isScaleHighlight = isScaleHighlighted(noteName, tonnetzSystemState);
-			vertex.classList.toggle('scale-highlight', isScaleHighlight);
-		}
+				vertex.classList.toggle('highlighted-vertex', isNoteHighlight);
+				vertex.classList.toggle('scale-highlight', isScaleHighlight);
+			}
+		});
 	}
-
 	function updateViewport(transform: d3.ZoomTransform, tonnetzSystemState) {
 		currentTransform = transform;
 		gridGroup.selectAll('*').remove();
