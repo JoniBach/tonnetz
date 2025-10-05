@@ -5,24 +5,22 @@
 
 	let svgEl: SVGSVGElement;
 	const size = 50;
-	const range = 4;
 
-	let width = 800; // SSR fallback
+	let width = 800;
 	let height = 600;
+	let zoomTransform = d3.zoomIdentity;
 
-	let gridLayer: d3.Selection<SVGGElement, unknown, null, undefined>;
+	let triangleLayer: d3.Selection<SVGGElement, unknown, null, undefined>;
+	let pointLayer: d3.Selection<SVGGElement, unknown, null, undefined>;
+	let labelLayer: d3.Selection<SVGGElement, unknown, null, undefined>;
 
-	// Draw grid elements once (positions only)
-	function drawGrid() {
-		if (!gridLayer) return;
+	let lazyTimeout: any;
 
-		let state: any;
-		gridStore.subscribe((s) => (state = s))();
+	function drawGrid(state: any) {
+		const xScale = (x: number) => x * zoomTransform.k;
+		const yScale = (y: number) => y * zoomTransform.k;
 
-		const { x: xScale, y: yScale } = gridStore.computeScales(width, height);
-
-		// Triangles
-		gridLayer
+		triangleLayer
 			.selectAll<SVGPolygonElement, Triangle>('polygon')
 			.data(state.triangles, (d) => d.points.sort().join('|'))
 			.join('polygon')
@@ -41,8 +39,7 @@
 			.style('cursor', 'pointer')
 			.on('click', (_, d) => gridStore.highlightTriangle(d.points.sort().join('|')));
 
-		// Points
-		gridLayer
+		pointLayer
 			.selectAll<SVGCircleElement, Point>('circle')
 			.data(Array.from(state.points.values()), (d) => `${d.q},${d.r}`)
 			.join('circle')
@@ -54,8 +51,7 @@
 			.style('cursor', 'pointer')
 			.on('click', (_, d) => gridStore.selectNote(d.note));
 
-		// Labels
-		gridLayer
+		labelLayer
 			.selectAll<SVGTextElement, Point>('text')
 			.data(Array.from(state.points.values()), (d) => `${d.q},${d.r}`)
 			.join('text')
@@ -70,42 +66,42 @@
 		width = window.innerWidth;
 		height = window.innerHeight;
 
-		gridStore.generateGrid(range, size);
-
 		const svg = d3.select(svgEl);
-		svg.selectAll('*').remove(); // clear any previous content
+		svg.selectAll('*').remove();
 
-		// Create <g> container for pan/zoom
-		gridLayer = svg.append('g').attr('class', 'grid-layer');
+		triangleLayer = svg.append('g').attr('class', 'triangle-layer');
+		pointLayer = svg.append('g').attr('class', 'point-layer');
+		labelLayer = svg.append('g').attr('class', 'label-layer');
 
-		// Draw the grid once
-		drawGrid();
+		gridStore.subscribe(drawGrid);
 
-		// D3 Zoom - right-click drag + scroll wheel
+		// Initial lazy-load
+		gridStore.lazyLoadViewport(width, height, zoomTransform, size, 6);
+
 		const zoom = d3
 			.zoom<SVGSVGElement, unknown>()
 			.scaleExtent([0.5, 4])
-			.filter((event) => event.button === 2 || event.type === 'wheel') // right-click or scroll only
+			.filter((event) => event.button === 2 || event.type === 'wheel')
 			.on('zoom', (event) => {
-				gridLayer.attr('transform', event.transform.toString());
+				zoomTransform = event.transform;
+
+				triangleLayer.attr('transform', zoomTransform.toString());
+				pointLayer.attr('transform', zoomTransform.toString());
+				labelLayer.attr('transform', zoomTransform.toString());
+
+				clearTimeout(lazyTimeout);
+				lazyTimeout = setTimeout(() => {
+					gridStore.lazyLoadViewport(width, height, zoomTransform, size, 6);
+				}, 50);
 			});
 
 		svg.call(zoom);
-
-		// Disable context menu for right-click
 		svgEl.addEventListener('contextmenu', (e) => e.preventDefault());
 
-		// Redraw only on store updates (selection/triangle highlight)
-		gridStore.subscribe(drawGrid);
-
-		const resizeHandler = () => {
+		window.addEventListener('resize', () => {
 			width = window.innerWidth;
 			height = window.innerHeight;
-			drawGrid();
-		};
-
-		window.addEventListener('resize', resizeHandler);
-		return () => window.removeEventListener('resize', resizeHandler);
+		});
 	});
 </script>
 

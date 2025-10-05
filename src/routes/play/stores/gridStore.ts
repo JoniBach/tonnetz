@@ -2,6 +2,9 @@ import { writable } from 'svelte/store';
 
 const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
+export type Point = { q: number; r: number; x: number; y: number; note: string };
+export type Triangle = { points: [string, string, string]; up: boolean };
+
 function axialToCartesian(q: number, r: number, size: number) {
 	const x = size * Math.sqrt(3) * (q + r / 2);
 	const y = size * 1.5 * r;
@@ -13,11 +16,8 @@ function getNote(q: number, r: number) {
 	return NOTES[semitone];
 }
 
-export type Point = { q: number; r: number; x: number; y: number; note: string };
-export type Triangle = { points: [string, string, string]; up: boolean };
-
 function createGridStore() {
-	const { subscribe, set, update } = writable({
+	const { subscribe, update } = writable({
 		points: new Map<string, Point>(),
 		triangles: [] as Triangle[],
 		highlightedNote: null as string | null,
@@ -27,42 +27,90 @@ function createGridStore() {
 
 	let pointsMap: Map<string, Point> = new Map();
 	let trianglesArr: Triangle[] = [];
+	let triangleIds: Set<string> = new Set();
+
+	// Generated axial bounds
+	let qMinGenerated = Infinity;
+	let qMaxGenerated = -Infinity;
+	let rMinGenerated = Infinity;
+	let rMaxGenerated = -Infinity;
 
 	return {
 		subscribe,
 
-		generateGrid(range: number, size: number) {
-			pointsMap = new Map();
-			trianglesArr = [];
+		/**
+		 * Fully store-centric lazy-load
+		 * page passes screen width/height, zoomTransform, and hex size
+		 */
+		lazyLoadViewport(width: number, height: number, zoomTransform: any, size: number, buffer = 6) {
+			// Compute visible world coordinates based on zoomTransform
+			const worldX0 = -zoomTransform.x / zoomTransform.k;
+			const worldY0 = -zoomTransform.y / zoomTransform.k;
+			const worldX1 = worldX0 + width / zoomTransform.k;
+			const worldY1 = worldY0 + height / zoomTransform.k;
 
-			for (let r = -range; r <= range; r++) {
-				for (let q = -range; q <= range; q++) {
-					if (Math.abs(q + r) > range) continue;
+			// Convert world bounds to axial coordinates with buffer
+			const qMin = Math.floor(worldX0 / (Math.sqrt(3) * size)) - buffer;
+			const qMax = Math.ceil(worldX1 / (Math.sqrt(3) * size)) + buffer;
+			const rMin = Math.floor(worldY0 / (1.5 * size)) - buffer;
+			const rMax = Math.ceil(worldY1 / (1.5 * size)) + buffer;
+
+			// Only generate outside existing bounds
+			const qStart = Math.min(qMin, qMinGenerated);
+			const qEnd = Math.max(qMax, qMaxGenerated);
+			const rStart = Math.min(rMin, rMinGenerated);
+			const rEnd = Math.max(rMax, rMaxGenerated);
+
+			// Update generated bounds
+			qMinGenerated = Math.min(qMinGenerated, qStart);
+			qMaxGenerated = Math.max(qMaxGenerated, qEnd);
+			rMinGenerated = Math.min(rMinGenerated, rStart);
+			rMaxGenerated = Math.max(rMaxGenerated, rEnd);
+
+			// Generate points
+			for (let r = rStart; r <= rEnd; r++) {
+				for (let q = qStart; q <= qEnd; q++) {
 					const id = `${q},${r}`;
-					const { x, y } = axialToCartesian(q, r, size);
-					pointsMap.set(id, { q, r, x, y, note: getNote(q, r) });
+					if (!pointsMap.has(id)) {
+						const { x, y } = axialToCartesian(q, r, size);
+						pointsMap.set(id, { q, r, x, y, note: getNote(q, r) });
+					}
 				}
 			}
 
-			pointsMap.forEach(({ q, r }) => {
-				const up1 = `${q},${r + 1}`;
-				const up2 = `${q + 1},${r}`;
-				if (pointsMap.has(up1) && pointsMap.has(up2))
-					trianglesArr.push({ points: [`${q},${r}`, up1, up2], up: true });
+			// Generate triangles
+			for (let r = rStart; r <= rEnd; r++) {
+				for (let q = qStart; q <= qEnd; q++) {
+					const id = `${q},${r}`;
 
-				const down1 = `${q},${r - 1}`;
-				const down2 = `${q - 1},${r}`;
-				if (pointsMap.has(down1) && pointsMap.has(down2))
-					trianglesArr.push({ points: [`${q},${r}`, down1, down2], up: false });
-			});
+					// Up triangle
+					const up1 = `${q},${r + 1}`;
+					const up2 = `${q + 1},${r}`;
+					const upId = [id, up1, up2].sort().join('|');
+					if (pointsMap.has(up1) && pointsMap.has(up2) && !triangleIds.has(upId)) {
+						trianglesArr.push({ points: [id, up1, up2], up: true });
+						triangleIds.add(upId);
+					}
 
-			set({
+					// Down triangle
+					const down1 = `${q},${r - 1}`;
+					const down2 = `${q - 1},${r}`;
+					const downId = [id, down1, down2].sort().join('|');
+					if (pointsMap.has(down1) && pointsMap.has(down2) && !triangleIds.has(downId)) {
+						trianglesArr.push({ points: [id, down1, down2], up: false });
+						triangleIds.add(downId);
+					}
+				}
+			}
+
+			// Update store
+			update((state) => ({
 				points: pointsMap,
 				triangles: trianglesArr,
-				highlightedNote: null,
-				selectedNotes: new Set(),
-				highlightedTriangles: new Set()
-			});
+				highlightedNote: state.highlightedNote,
+				selectedNotes: state.selectedNotes,
+				highlightedTriangles: state.highlightedTriangles
+			}));
 		},
 
 		selectNote(note: string) {
@@ -87,32 +135,6 @@ function createGridStore() {
 
 		getTrianglePoints(triangle: Triangle): Point[] {
 			return triangle.points.map((id) => pointsMap.get(id)).filter(Boolean) as Point[];
-		},
-
-		computeScales(width: number, height: number, padding = 50) {
-			// Keep a fixed scale
-			const scale = 1; // or multiply by your desired zoom factor
-
-			// Optional: center the grid based on viewport
-			const pointsArray = Array.from(pointsMap.values());
-			const xs = pointsArray.map((p) => p.x);
-			const ys = pointsArray.map((p) => p.y);
-
-			const minX = Math.min(...xs);
-			const maxX = Math.max(...xs);
-			const minY = Math.min(...ys);
-			const maxY = Math.max(...ys);
-
-			const gridWidth = maxX - minX;
-			const gridHeight = maxY - minY;
-
-			const xOffset = (width - gridWidth) / 2 - minX;
-			const yOffset = (height - gridHeight) / 2 - minY;
-
-			return {
-				x: (x: number) => x + xOffset,
-				y: (y: number) => y + yOffset
-			};
 		},
 
 		getPointsArray() {
