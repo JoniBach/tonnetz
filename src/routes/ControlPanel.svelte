@@ -19,8 +19,6 @@
 		applyMode,
 		clearScale,
 		triggerUpdate
-		// handleFileInputChange,
-		// toggleMidiPlay
 	} = $props();
 
 	// Audio state
@@ -90,29 +88,6 @@
 	<div class="control-row audio-status">
 		<span>🔊 Audio: {isPlaying ? 'Playing' : 'Ready'}</span>
 	</div>
-
-	<!-- <div class="control-row">
-		<div class="file-input">
-			<input
-				type="file"
-				id="file"
-				accept=".mid"
-				onchange={(e) => handleFileInputChange(e, tonnetzSystemState)}
-			/>
-			<label for="file" class="file-label"
-				>{tonnetzSystemState.midiFile
-					? tonnetzSystemState.midiFile.name
-					: 'No file selected'}</label
-			>
-		</div>
-	</div>
-
-	<button
-		onclick={(e) => toggleMidiPlay(e, tonnetzSystemState)}
-		disabled={!tonnetzSystemState.midiPlayer}
-	>
-		{tonnetzSystemState.isMidiPlaying ? '⏹ Stop MIDI' : '▶ Play MIDI'}
-	</button> -->
 
 	<!-- Audio Settings -->
 	<div class="audio-settings">
