@@ -211,7 +211,7 @@
 
 	// let tonnetzSystemState.gridGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
 	// let tonnetzSystemState.currentTransform: d3.ZoomTransform = d3.zoomIdentity;
-	let synth = null;
+	// let tonnetzSystemState.synth = null;
 	let isInitialized = false;
 	let currentlyPlayingNotes = new Set();
 	let sustainedNotes = new Map(); // Map of note -> voice for sustained playback
@@ -427,8 +427,8 @@
 				await Tone.start();
 			}
 
-			// Create a simple polyphonic synthesizer
-			synth = new Tone.PolySynth(Tone.Synth, {
+			// Create a simple polyphonic tonnetzSystemState.synthesizer
+			tonnetzSystemState.synth = new Tone.PolySynth(Tone.Synth, {
 				oscillator: { type: 'triangle' },
 				envelope: { attack: 0.1, decay: 0.2, sustain: 0.3, release: 1 },
 				volume: -12
@@ -450,7 +450,7 @@
 			await initAudio();
 		}
 
-		if (!synth || !notes) return;
+		if (!tonnetzSystemState.synth || !notes) return;
 
 		// Convert notes to proper format (add octave if missing) - optimized
 		const toneNotes = notes.map((note) => (note.match(/\d/) ? note : `${note}4`));
@@ -470,7 +470,7 @@
 		// Stop notes that are no longer selected
 		for (const note of currentNotesSet) {
 			if (!newNotesSet.has(note)) {
-				synth.triggerRelease(note);
+				tonnetzSystemState.synth.triggerRelease(note);
 				sustainedNotes.delete(note);
 			}
 		}
@@ -478,7 +478,7 @@
 		// Start new notes that aren't already playing
 		for (const note of newNotesSet) {
 			if (!currentNotesSet.has(note)) {
-				synth.triggerAttack(note);
+				tonnetzSystemState.synth.triggerAttack(note);
 				sustainedNotes.set(note, true);
 			}
 		}
@@ -492,7 +492,7 @@
 	const stopSustainedNotes = () => {
 		for (const [note] of sustainedNotes.entries()) {
 			try {
-				synth.triggerRelease(note);
+				tonnetzSystemState.synth.triggerRelease(note);
 			} catch (error) {
 				// Note might already be released
 			}
@@ -502,9 +502,9 @@
 	};
 
 	const disposeAudio = () => {
-		if (synth) {
-			synth.dispose();
-			synth = null;
+		if (tonnetzSystemState.synth) {
+			tonnetzSystemState.synth.dispose();
+			tonnetzSystemState.synth = null;
 		}
 		isInitialized = false;
 	};
