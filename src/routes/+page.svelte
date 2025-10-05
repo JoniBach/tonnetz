@@ -356,6 +356,34 @@
 		return Utils.getCentroid(vertices);
 	}
 
+	function getChordTones(root: string, isMinor: boolean): string[] {
+		// Define the intervals for major and minor triads
+		const majorIntervals = [0, 4, 7]; // Root, Major 3rd, Perfect 5th
+		const minorIntervals = [0, 3, 7]; // Root, Minor 3rd, Perfect 5th
+
+		// Get the semitone value of the root note
+		const rootNote = root.replace(/[0-9]/g, ''); // Remove any octave number
+		const rootSemitone = NOTE_TO_SEMITONE[rootNote];
+
+		if (rootSemitone === undefined) {
+			console.warn(`Unknown root note: ${rootNote}`);
+			return [];
+		}
+
+		// Get the intervals based on chord type
+		const intervals = isMinor ? minorIntervals : majorIntervals;
+
+		// Calculate the notes
+		return intervals
+			.map((interval) => {
+				const semitone = (rootSemitone + interval) % 12;
+				// Find the note name for this semitone
+				const noteEntry = Object.entries(NOTE_TO_SEMITONE).find(([_, value]) => value === semitone);
+				return noteEntry ? noteEntry[0] : '';
+			})
+			.filter((note) => note !== ''); // Filter out any invalid notes
+	}
+
 	function getTriangleVertices(pos: { x: number; y: number }, up: boolean) {
 		return Utils.getTriangleVertices(
 			pos,
