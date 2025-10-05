@@ -212,7 +212,7 @@
 	// let tonnetzSystemState.gridGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
 	// let tonnetzSystemState.currentTransform: d3.ZoomTransform = d3.zoomIdentity;
 	// let tonnetzSystemState.synth = null;
-	let isInitialized = false;
+	// let tonnetzSystemState.isInitialized = false;
 	let currentlyPlayingNotes = new Set();
 	let sustainedNotes = new Map(); // Map of note -> voice for sustained playback
 
@@ -419,7 +419,7 @@
 	 * Initialize Tone.js audio context
 	 */
 	const initAudio = async () => {
-		if (isInitialized) return;
+		if (tonnetzSystemState.isInitialized) return;
 
 		try {
 			// Start Tone.js audio context
@@ -434,7 +434,7 @@
 				volume: -12
 			}).toDestination();
 
-			isInitialized = true;
+			tonnetzSystemState.isInitialized = true;
 			console.log('Audio initialized successfully');
 		} catch (error) {
 			console.error('Failed to initialize audio:', error);
@@ -446,7 +446,7 @@
 	 * @param {string[]} notes - Array of note names to sustain
 	 */
 	const sustainNotes = async (notes) => {
-		if (!isInitialized) {
+		if (!tonnetzSystemState.isInitialized) {
 			await initAudio();
 		}
 
@@ -506,7 +506,7 @@
 			tonnetzSystemState.synth.dispose();
 			tonnetzSystemState.synth = null;
 		}
-		isInitialized = false;
+		tonnetzSystemState.isInitialized = false;
 	};
 
 	function applyChordPattern(patternName: string, rootNote: string, tonnetzSystemState) {
