@@ -1,17 +1,19 @@
 import * as d3 from 'd3';
+import * as Tone from 'tone';
+import type { MidiPlayer } from './midiPlayer';
 
 // Event System
 type EventHandler<T = any> = (data: T) => void;
 type EventHandlers = Map<string, Set<EventHandler>>;
 
-// Audio context state
+// Audio state
 interface AudioState {
 	audioContext: AudioContext | null;
 	activeOscillators: Set<OscillatorNode>;
 	activeAudioBuffers: Set<AudioBufferSourceNode>;
 }
 
-// Main application state
+// Tonnetz state
 interface TonnetzState {
 	currentRootNote: number;
 	showMusicalLabels: boolean;
@@ -39,15 +41,18 @@ interface TonnetzState {
 	audioState: AudioState;
 	autoPlayTimeout: ReturnType<typeof setTimeout> | null;
 	isPlaying: boolean;
+	isMidiPlaying: boolean;
+	midiPlayer: MidiPlayer | null;
 }
 
 // Initialize audio state
 const createAudioState = (): AudioState => ({
 	audioContext: null,
-	activeOscillators: new Set<OscillatorNode>(),
-	activeAudioBuffers: new Set<AudioBufferSourceNode>()
+	activeOscillators: new Set(),
+	activeAudioBuffers: new Set()
 });
 
+// Event system singleton
 class EventSystem {
 	private handlers: EventHandlers = new Map();
 	private static instance: EventSystem;
@@ -55,16 +60,12 @@ class EventSystem {
 	private constructor() {}
 
 	public static getInstance(): EventSystem {
-		if (!EventSystem.instance) {
-			EventSystem.instance = new EventSystem();
-		}
+		if (!EventSystem.instance) EventSystem.instance = new EventSystem();
 		return EventSystem.instance;
 	}
 
 	on<T = any>(event: string, handler: EventHandler<T>): () => void {
-		if (!this.handlers.has(event)) {
-			this.handlers.set(event, new Set());
-		}
+		if (!this.handlers.has(event)) this.handlers.set(event, new Set());
 		const handlers = this.handlers.get(event)!;
 		handlers.add(handler);
 		return () => this.off(event, handler);
@@ -74,9 +75,7 @@ class EventSystem {
 		if (!this.handlers.has(event)) return;
 		const handlers = this.handlers.get(event)!;
 		handlers.delete(handler);
-		if (handlers.size === 0) {
-			this.handlers.delete(event);
-		}
+		if (handlers.size === 0) this.handlers.delete(event);
 	}
 
 	emit<T = any>(event: string, data?: T): void {
@@ -85,8 +84,8 @@ class EventSystem {
 		handlers.forEach((handler) => {
 			try {
 				handler(data);
-			} catch (error) {
-				console.error(`Error in event handler for ${event}:`, error);
+			} catch (err) {
+				console.error(`Error in event handler for ${event}:`, err);
 			}
 		});
 	}
@@ -96,6 +95,7 @@ class EventSystem {
 	}
 }
 
+// Tonnetz system factory
 export const createTonnetzSystem = (config) => {
 	const eventSystem = EventSystem.getInstance();
 
@@ -117,21 +117,23 @@ export const createTonnetzSystem = (config) => {
 		selectedMode: null,
 		scaleRoot: null,
 		highlightedScaleNotes: new Set<string>(),
-		// Performance caches
-		coordinateCache: new Map<string, { q: number; r: number }>(),
-		coordinatePatternCache: new Map<string, string>(),
-		highlightedChordsCache: new Set<string>(),
+		coordinateCache: new Map(),
+		coordinatePatternCache: new Map(),
+		highlightedChordsCache: new Set(),
 		lastSelectedNotesHash: '',
 		debouncedChordTimeout: null,
 		throttledDragTimeout: null,
 		audioState: createAudioState(),
 		autoPlayTimeout: null,
-		isPlaying: false
-		// ... rest of your state
+		isPlaying: false,
+		isMidiPlaying: false,
+		midiPlayer: null
 	});
 
+	const state = createState();
+
 	// Event handlers
-	const handleMouseDown = (state: TonnetzState, event: MouseEvent) => {
+	const handleMouseDown = (event: MouseEvent) => {
 		if (event.button !== 0) return;
 		eventSystem.emit('MOUSE_DOWN', {
 			x: event.clientX,
@@ -141,92 +143,50 @@ export const createTonnetzSystem = (config) => {
 		});
 	};
 
-	const handleGlobalMouseUp = (state: TonnetzState, event: MouseEvent) => {
+	const handleMouseUp = (event: MouseEvent) => {
 		if (state.isDragging) {
 			state.isDragging = false;
-			eventSystem.emit('MOUSE_UP', {
-				x: event.clientX,
-				y: event.clientY,
-				target: event.target
-			});
+			eventSystem.emit('MOUSE_UP', { x: event.clientX, y: event.clientY, target: event.target });
 		}
 	};
 
-	const handleKeyDown = (state: TonnetzState, event: KeyboardEvent) => {
-		if (event.key === 'Shift') {
-			state.isShiftPressed = true;
-		}
+	const handleKeyDown = (event: KeyboardEvent) => {
+		if (event.key === 'Shift') state.isShiftPressed = true;
 		eventSystem.emit('KEY_DOWN', { key: event.key });
-		console.log('shiftdown');
 	};
 
-	const handleKeyUp = (state: TonnetzState, event: KeyboardEvent) => {
-		if (event.key === 'Shift') {
-			state.isShiftPressed = false;
-		}
+	const handleKeyUp = (event: KeyboardEvent) => {
+		if (event.key === 'Shift') state.isShiftPressed = false;
 		eventSystem.emit('KEY_UP', { key: event.key });
-		console.log('shiftup');
 	};
 
-	// Setup function to be called from component's onMount
-	const setupEventListeners = (state: TonnetzState, container: HTMLElement, svg: SVGSVGElement) => {
-		// Create bound event handlers
-		const boundHandleMouseUp = (e: MouseEvent) => handleGlobalMouseUp(state, e);
-		const boundHandleKeyDown = (e: KeyboardEvent) => handleKeyDown(state, e);
-		const boundHandleKeyUp = (e: KeyboardEvent) => handleKeyUp(state, e);
-		const boundHandleMouseDown = (e: MouseEvent) => handleMouseDown(state, e);
+	const setupEventListeners = (container: HTMLElement, svg: SVGSVGElement) => {
+		window.addEventListener('mouseup', handleMouseUp);
+		window.addEventListener('keydown', handleKeyDown);
+		window.addEventListener('keyup', handleKeyUp);
+		d3.select(svg).on('mousedown', handleMouseDown);
 
-		// Set up global listeners
-		window.addEventListener('mouseup', boundHandleMouseUp);
-		window.addEventListener('keydown', boundHandleKeyDown);
-		window.addEventListener('keyup', boundHandleKeyUp);
+		const unsubscribe = eventSystem.on('STATE_UPDATE', () => eventSystem.emit('UPDATE_VIEW'));
 
-		// Set up SVG listeners
-		d3.select(svg).on('mousedown', boundHandleMouseDown);
-
-		// Set up reactive updates
-		const unsubscribe = eventSystem.on('STATE_UPDATE', () => {
-			eventSystem.emit('UPDATE_VIEW');
-		});
-
-		// Return cleanup function
 		return () => {
-			window.removeEventListener('mouseup', boundHandleMouseUp);
-			window.removeEventListener('keydown', boundHandleKeyDown);
-			window.removeEventListener('keyup', boundHandleKeyUp);
+			window.removeEventListener('mouseup', handleMouseUp);
+			window.removeEventListener('keydown', handleKeyDown);
+			window.removeEventListener('keyup', handleKeyUp);
 			d3.select(svg).on('mousedown', null);
 			unsubscribe();
 		};
 	};
 
-	const cleanup = (state: TonnetzState) => {
-		// Stop all audio
-		if (typeof Tone !== 'undefined') {
-			Tone.Transport.cancel();
-			if (window.audioManager) {
-				window.audioManager.stop();
-			}
-		}
-
-		// Clear any timeouts
+	const cleanup = () => {
+		Tone.Transport.cancel();
 		if (state.debouncedChordTimeout) clearTimeout(state.debouncedChordTimeout);
 		if (state.throttledDragTimeout) clearTimeout(state.throttledDragTimeout);
 	};
-	// Create the state instance
-	const state = createState();
 
-	// Return the state along with bound methods
-	return {
-		...state,
-		handleMouseDown: (e: MouseEvent) => handleMouseDown(state, e),
-		handleGlobalMouseUp: (e: MouseEvent) => handleGlobalMouseUp(state, e),
-		handleKeyDown: (e: KeyboardEvent) => handleKeyDown(state, e),
-		handleKeyUp: (e: KeyboardEvent) => handleKeyUp(state, e),
-		setupEventListeners: (container: HTMLElement, svg: SVGSVGElement) =>
-			setupEventListeners(state, container, svg),
-		cleanup: () => cleanup(state)
-	};
+	return { ...state, setupEventListeners, cleanup };
 };
 
-// Export EventSystem for use in components
+// MIDI Player
+
+// EventSystem export
 export { EventSystem };

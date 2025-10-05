@@ -7,6 +7,7 @@
 	import ControlPanel from './ControlPanel.svelte';
 	import './tonnetz.css';
 	import { createTonnetzSystem } from './tonnetzSystem.js';
+	import { MidiPlayer } from './midiPlayer.js';
 	import { EventSystem } from './tonnetzSystem.js';
 	import { initAudio, sustainNotes, stopSustainedNotes, disposeAudio } from './simple-audio.js';
 	type ElementType = 'triangle' | 'circle';
@@ -32,9 +33,14 @@
 	const eventSystem = EventSystem.getInstance();
 
 	let tonnetzSystemState = $state(createTonnetzSystem(CONFIG));
+	// const unsubscribeMidiNotes = eventSystem.on<Set<string>>('MIDI_ACTIVE_NOTES', (notes) => {
+	// 	// Update Tonnetz state without breaking existing logic
+	// 	tonnetzSystemState.selectedNotes = new Set(notes);
+	// 	tonnetzSystemState.highlightedNote = null; // optional: clear single highlight
+	// 	eventSystem.emit('STATE_UPDATE');
+	// });
 
 	$effect(() => {
-		// Create a stable reference to the values we care about
 		const notes = [
 			tonnetzSystemState.highlightedNote,
 			tonnetzSystemState.selectedNotes?.size || 0,
@@ -49,7 +55,6 @@
 			tonnetzSystemState.rInterval
 		].join('|');
 
-		// Only run the effect when these values actually change
 		$effect.root(() => {
 			const hasHighlighted = tonnetzSystemState.highlightedNote !== null;
 			const hasSelected = tonnetzSystemState.selectedNotes?.size > 0;
@@ -69,28 +74,19 @@
 	});
 
 	onMount(function () {
-		// Initialize SVG and grid
 		initTonnetz(tonnetzSystemState);
 
-		// Add this event listener
 		const controlPanelUpdateUnsubscribe = eventSystem.on('CONTROL_PANEL_UPDATE', (state) => {
-			// Trigger the same update logic as mouseup
 			updateHighlightsOnly(tonnetzSystemState);
 
-			// If you have any other update logic that runs on mouseup, include it here
-			// For example, if you have a function called updateViewport, call it:
 			if (currentTransform) {
 				updateViewport(currentTransform, tonnetzSystemState);
 			}
 		});
 
-		// Set up event listeners
 		const cleanupListeners = tonnetzSystemState.setupEventListeners(container, svg.node()!);
 
-		// Handle mouse up events
 		const unsubscribeMouseUp = eventSystem.on('MOUSE_UP', function (data) {
-			// Stop all playing notes
-
 			if (data.wasDragging && !data.shiftKey && tonnetzSystemState.isDragging) {
 				tonnetzSystemState.highlightedNote = null;
 				tonnetzSystemState.selectedNotes = new Set<string>();
@@ -100,19 +96,16 @@
 				tonnetzSystemState.isDragging = false;
 			}
 
-			// Update highlights if needed
 			if (gridGroup && (tonnetzSystemState.selectedScale || tonnetzSystemState.selectedMode)) {
 				updateHighlightsOnly(tonnetzSystemState);
 			}
 		});
 
-		// Handle state updates
 		const unsubscribeStateUpdate = eventSystem.on('STATE_UPDATE', function () {
 			updateViewport(currentTransform, tonnetzSystemState);
 			updateHighlightsOnly(tonnetzSystemState);
 		});
 
-		// Handle window resize
 		const handleResize = function () {
 			const [width, height] = [window.innerWidth, window.innerHeight];
 			if (svg) {
@@ -121,19 +114,21 @@
 			}
 		};
 
-		// Add global mouse up handler to catch mouse up outside the SVG
 		const handleGlobalMouseUp = function (tonnetzSystemState) {
 			tonnetzSystemState.isDragging = false;
 		};
 		window.addEventListener('mouseup', handleGlobalMouseUp);
 
-		// Initial resize
 		handleResize();
 		window.addEventListener('resize', handleResize);
 
-		// Cleanup function
+		// tonnetzSystemState.midiPlayer = new MidiPlayer(-10); // optional: pass volume
+		// tonnetzSystemState.midiPlayer.onUpdate = (activeNotes) => {
+		// 	// Send active notes to Tonnetz via EventSystem
+		// 	eventSystem.emit('MIDI_ACTIVE_NOTES', activeNotes);
+		// };
+
 		return function () {
-			// Cleanup all event listeners
 			cleanupListeners();
 			unsubscribeMouseUp();
 			unsubscribeStateUpdate();
@@ -141,7 +136,6 @@
 
 			window.removeEventListener('resize', handleResize);
 			window.removeEventListener('mouseup', handleGlobalMouseUp);
-			// Cleanup any other resources
 			tonnetzSystemState.cleanup();
 		};
 	});
@@ -158,7 +152,6 @@
 			tonnetzSystemState
 		);
 
-		// Trigger chord detection for triangle highlighting
 		debouncedChordCalculation(tonnetzSystemState);
 
 		if (gridGroup) throttledDragUpdate(tonnetzSystemState);
@@ -183,7 +176,6 @@
 		if (gridGroup) throttledDragUpdate(tonnetzSystemState);
 	}
 
-	// Generic pattern applier
 	function applyPattern(pattern: [number, number][], rootNote: string, tonnetzSystemState) {
 		return Utils.applyPattern(
 			pattern,
@@ -209,7 +201,6 @@
 		return Utils.cartesianToHex(x, y, CONFIG.baseTriangleSize, geometryConstants.triHeight);
 	}
 
-	// Utility functions
 	function changeTonnetzPreset(presetName: string, tonnetzSystemState) {
 		const preset = CONFIG.tonnetz.presets[presetName as keyof typeof CONFIG.tonnetz.presets];
 		if (preset) {
@@ -224,7 +215,6 @@
 		tonnetzSystemState.chordPatternRoot = null;
 		tonnetzSystemState.highlightedPatternNotes.clear();
 
-		// Clear chord cache and trigger recalculation
 		tonnetzSystemState.highlightedChordsCache.clear();
 		tonnetzSystemState.lastSelectedNotesHash = '';
 		debouncedChordCalculation(tonnetzSystemState);
@@ -281,7 +271,6 @@
 				return isScaleHighlighted(noteName, tonnetzSystemState);
 			})
 
-			// Update the mousedown handler for notes
 			.on('mousedown', function (event: MouseEvent) {
 				handleMouseDown(
 					event,
@@ -324,7 +313,6 @@
 		updateViewport(currentTransform, tonnetzSystemState);
 	}
 
-	// Element creation functions
 	function createInnerCircleElement(
 		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
 		pos: { x: number; y: number }
@@ -341,7 +329,6 @@
 			.style('pointer-events', 'none');
 	}
 
-	// Optimized inner triangle creation
 	function createInnerTriangleElement(
 		parent: d3.Selection<SVGGElement, unknown, null, undefined>,
 		gridPos: { x: number; y: number },
@@ -529,7 +516,6 @@
 		}, 16);
 	}
 
-	// Debounced chord calculation to prevent excessive computation
 	function debouncedChordCalculation(tonnetzSystemState) {
 		if (tonnetzSystemState.debouncedChordTimeout) {
 			clearTimeout(tonnetzSystemState.debouncedChordTimeout);
@@ -539,7 +525,6 @@
 			const allNotes = getAllHighlightedNotes(tonnetzSystemState);
 			const currentHash = JSON.stringify([...allNotes].sort());
 
-			// Only recalculate if notes have actually changed
 			if (currentHash !== tonnetzSystemState.lastSelectedNotesHash) {
 				tonnetzSystemState.lastSelectedNotesHash = currentHash;
 				tonnetzSystemState.highlightedChordsCache.clear();
@@ -554,7 +539,6 @@
 					}
 				}
 
-				// Update highlights after calculation
 				requestAnimationFrame(function () {
 					return updateHighlightsOnly(tonnetzSystemState);
 				});
@@ -562,7 +546,6 @@
 		}, 16); // ~60fps throttle
 	}
 
-	// Get all currently highlighted/selected notes
 	function getAllHighlightedNotes(tonnetzSystemState): string[] {
 		return Utils.getAllHighlightedNotes(
 			tonnetzSystemState.highlightedNote,
@@ -575,11 +558,9 @@
 		return Utils.getCentroid(vertices);
 	}
 
-	// Get chord type from a set of notes
 	function getChordFromNotes(notes: string[], tonnetzSystemState) {
 		if (notes.length !== 3) return null;
 
-		// Search for triangles that contain exactly these 3 notes
 		for (let row = -10; row <= 10; row++) {
 			for (let col = -10; col <= 10; col++) {
 				const isUp = (row + col) % 2 === 0;
@@ -593,7 +574,6 @@
 					return getPitchWithOctave(q, r, tonnetzSystemState.currentRootNote, tonnetzSystemState);
 				});
 
-				// Check if this triangle contains exactly the same notes
 				const sortedTriangleNotes = [...triangleNotes].sort();
 				const sortedInputNotes = [...notes].sort();
 
@@ -605,15 +585,12 @@
 		return null;
 	}
 
-	// Get notes that make up a chord
 	function getChordNotes(chordType: string, tonnetzSystemState) {
 		if (!chordType || chordType === 'null') return [];
 
-		// Parse chord type (e.g., "C-up" or "F#-down")
 		const [chordName, orientation] = chordType.split('-');
 		if (!chordName || !orientation) return [];
 
-		// Find a triangle with this chord type to get its vertices
 		for (let row = -5; row <= 5; row++) {
 			for (let col = -5; col <= 5; col++) {
 				const isUp = (row + col) % 2 === 0;
@@ -633,12 +610,10 @@
 		return [];
 	}
 
-	// Legacy function kept for compatibility - redirects to optimized version
 	function getCombinations(arr: string[], size: number) {
 		if (size === 3) {
 			return getTriadCombinations(arr);
 		}
-		// Fallback for other sizes (rarely used)
 		if (size > arr.length) return [];
 		if (size === 1)
 			return arr.map(function (item) {
@@ -657,7 +632,6 @@
 		return result;
 	}
 
-	// Get coordinate for a single note - optimized with caching
 	function getCoordinateForNote(noteName: string) {
 		const coords = getNoteCoordsFromCache(noteName, tonnetzSystemState);
 		if (coords) {
@@ -666,7 +640,6 @@
 		return '(?,?)';
 	}
 
-	// Get coordinate pattern from selected notes - optimized with caching
 	function getCoordinatePattern(tonnetzSystemState) {
 		const allNotes = getAllHighlightedNotes(tonnetzSystemState);
 		if (allNotes.length === 0 && tonnetzSystemState.highlightedPatternNotes.size === 0) return '';
@@ -676,14 +649,12 @@
 				? Array.from(tonnetzSystemState.highlightedPatternNotes)
 				: allNotes;
 
-		// Create cache key
 		const cacheKey = `${JSON.stringify([...notesToCheck].sort())}-${tonnetzSystemState.currentRootNote}-${tonnetzSystemState.qInterval}-${tonnetzSystemState.rInterval}`;
 
 		if (tonnetzSystemState.coordinatePatternCache.has(cacheKey)) {
 			return tonnetzSystemState.coordinatePatternCache.get(cacheKey)!;
 		}
 
-		// Find all note coordinates using optimized cache lookup
 		const noteCoords: Array<{ note: string; q: number; r: number }> = [];
 
 		for (const noteName of notesToCheck) {
@@ -695,27 +666,22 @@
 
 		if (noteCoords.length === 0) return '';
 
-		// Find root note: use (0,0) if it exists, otherwise use the first note
 		let rootCoords: { q: number; r: number } | null = null;
 
-		// First try to find (0,0) as root
 		const zeroZero = noteCoords.find(function (nc) {
 			return nc.q === 0 && nc.r === 0;
 		});
 		if (zeroZero) {
 			rootCoords = { q: 0, r: 0 };
 		} else {
-			// Otherwise use the first note in the list as root
 			rootCoords = { q: noteCoords[0].q, r: noteCoords[0].r };
 		}
 
-		// Calculate relative coordinates from root
 		const coordinates: Array<[number, number]> = [];
 		for (const { q, r } of noteCoords) {
 			coordinates.push([q - rootCoords.q, r - rootCoords.r]);
 		}
 
-		// Sort coordinates for consistent display
 		coordinates.sort(function (a, b) {
 			return a[0] === b[0] ? a[1] - b[1] : a[0] - b[0];
 		});
@@ -726,17 +692,11 @@
 	}
 
 	function getCurrentNotes(tonnetzSystemState) {
-		// First priority: Individual note selections
 		if (tonnetzSystemState.selectedNotes.size > 0) {
 			return Array.from(tonnetzSystemState.selectedNotes);
-		}
-		// Second priority: Single highlighted note
-		else if (tonnetzSystemState.highlightedNote) {
+		} else if (tonnetzSystemState.highlightedNote) {
 			return [tonnetzSystemState.highlightedNote];
-		}
-		// Third priority: Highlighted chords (triangles)
-		else if (getHighlightedChords(tonnetzSystemState).length > 0) {
-			// Extract all chord tones from highlighted chords
+		} else if (getHighlightedChords(tonnetzSystemState).length > 0) {
 			const allChordTones = [];
 			for (const chord of getHighlightedChords(tonnetzSystemState)) {
 				const [root, orientation] = chord.split('-');
@@ -744,24 +704,18 @@
 				const chordTones = getChordTones(root, isMinor);
 				allChordTones.push(...chordTones);
 			}
-			// Remove duplicates
 			return [...new Set(allChordTones)];
-		}
-		// Last priority: Pattern notes
-		else if (tonnetzSystemState.highlightedPatternNotes.size > 0) {
+		} else if (tonnetzSystemState.highlightedPatternNotes.size > 0) {
 			return Array.from(tonnetzSystemState.highlightedPatternNotes);
 		}
 		return [];
 	}
 
-	// Get all chords that are currently highlighted (formed by selected notes) - optimized with cache
 	function getHighlightedChords(tonnetzSystemState) {
-		// Use cached results for better performance
 		if (tonnetzSystemState.highlightedChordsCache.size > 0) {
 			return Array.from(tonnetzSystemState.highlightedChordsCache);
 		}
 
-		// Trigger calculation if cache is empty and we have enough notes
 		const allNotes = getAllHighlightedNotes(tonnetzSystemState);
 		if (allNotes.length >= 3) {
 			debouncedChordCalculation(tonnetzSystemState);
@@ -774,7 +728,6 @@
 		return INTERVAL_NAMES[semitones] || `${semitones} semitones`;
 	}
 
-	// Coordinate lookup with caching
 	function getNoteCoordsFromCache(noteName: string, tonnetzSystemState) {
 		const cacheKey = Utils.createCacheKey(
 			noteName,
@@ -814,12 +767,10 @@
 		);
 	}
 
-	// Triad combination generator
 	function getTriadCombinations(arr: string[]) {
 		return Utils.getTriadCombinations(arr);
 	}
 
-	// Optimized chord detection with major/minor distinction
 	function getTriangleChord(row: number, col: number, isUp: boolean, tonnetzSystemState): string {
 		const pos = { x: col * geometryConstants.spacing.col, y: row * geometryConstants.spacing.row };
 		const vertices = getTriangleVertices(pos, isUp);
@@ -834,7 +785,6 @@
 			return mod12(fullPitch); // Always use mod12 for chord detection
 		});
 
-		// Check each note as potential root
 		for (const [i, root] of pitchClasses.entries()) {
 			const intervals = pitchClasses
 				.filter(function (_, idx) {
@@ -856,14 +806,12 @@
 		return `${NOTES[pitchClasses[0]]}?`;
 	}
 
-	// Get triangle type (major/minor) for more specific identification
 	function getTriangleType(row: number, col: number, isUp: boolean): string {
 		const chordName = getTriangleChord(row, col, isUp, tonnetzSystemState);
 		const triangleOrientation = isUp ? 'up' : 'down';
 		return `${chordName}-${triangleOrientation}`;
 	}
 
-	// Wrapper functions that inject dependencies into pure functions
 	function getTriangleVertices(pos: { x: number; y: number }, up: boolean) {
 		return Utils.getTriangleVertices(
 			pos,
@@ -877,12 +825,10 @@
 		return Utils.getVisibleBounds(transform, CONFIG.baseTriangleSize, geometryConstants.spacing);
 	}
 
-	// Global mouse up handler
 	function handleGlobalMouseUp(tonnetzSystemState) {
 		tonnetzSystemState.isDragging = false;
 	}
 
-	// Keyboard event listeners for shift key
 	function handleKeyDown(e: KeyboardEvent, tonnetzSystemState) {
 		if (e.key === 'Shift') {
 			tonnetzSystemState.isShiftPressed = true;
@@ -899,11 +845,9 @@
 		event: MouseEvent,
 		type: 'note' | 'chord',
 		data: {
-			// For chords
 			row?: number;
 			col?: number;
 			up?: boolean;
-			// For notes
 			x?: number;
 			y?: number;
 			rootNote?: string;
@@ -913,7 +857,6 @@
 		if (event.button !== 0) return;
 		event.preventDefault();
 
-		// Update shift key state from the event
 		tonnetzSystemState.isShiftPressed = event.shiftKey;
 		tonnetzSystemState.isDragging = true;
 		if (type === 'chord') {
@@ -930,7 +873,6 @@
 			const noteName = getPitchWithOctave(q, r, rootNote, tonnetzSystemState);
 
 			if (tonnetzSystemState.isShiftPressed) {
-				// Toggle note in selection
 				if (tonnetzSystemState.selectedNotes.has(noteName)) {
 					tonnetzSystemState.selectedNotes.delete(noteName);
 				} else {
@@ -977,53 +919,72 @@
 		return element;
 	}
 
-	// Window resize handler
 	function handleResize() {
 		if (!svg) return;
 
-		// Get new dimensions
 		const containerElement = svg.node()?.parentElement;
 		if (!containerElement) return;
 
 		const newWidth = containerElement.clientWidth;
 		const newHeight = containerElement.clientHeight;
 
-		// Update SVG dimensions
 		svg.attr('width', newWidth).attr('height', newHeight);
 
-		// Update viewport with current transform
 		if (currentTransform) {
 			updateViewport(currentTransform, tonnetzSystemState);
 		}
 	}
 
-	// Highlight functions - simplified to work with notes only
+	function handleFileInputChange(event: Event, tonnetzSystemState) {
+		const input = event.target as HTMLInputElement;
+		if (!input.files?.length || !tonnetzSystemState.midiPlayer) return;
+
+		const file = input.files[0];
+
+		tonnetzSystemState.midiPlayer
+			.load(file)
+			.then(() => {
+				// Reset Tonnetz state when a new file is loaded
+				tonnetzSystemState.selectedNotes.clear();
+				tonnetzSystemState.highlightedNote = null;
+				tonnetzSystemState.isPlaying = false;
+			})
+			.catch((err) => {
+				console.error('Failed to load MIDI:', err);
+			});
+	}
+	async function toggleMidiPlay(e, tonnetzSystemState) {
+		if (!tonnetzSystemState.midiPlayer) return;
+
+		if (tonnetzSystemState.isPlaying) {
+			tonnetzSystemState.midiPlayer.stop();
+			tonnetzSystemState.isPlaying = false;
+		} else {
+			await tonnetzSystemState.midiPlayer.play();
+			tonnetzSystemState.isPlaying = true;
+		}
+	}
+
 	function highlightChord(chordType: string, tonnetzSystemState) {
-		// Get the notes that make up this chord
 		const chordNotes = getChordNotes(chordType, tonnetzSystemState);
 
 		if (tonnetzSystemState.isShiftPressed) {
-			// Toggle selection: if all notes are selected, deselect them; otherwise select all
 			const allSelected = chordNotes.every(function (note) {
 				return tonnetzSystemState.selectedNotes.has(note);
 			});
 
 			if (allSelected) {
-				// Deselect all chord notes
 				chordNotes.forEach(function (note) {
 					return tonnetzSystemState.selectedNotes.delete(note);
 				});
 			} else {
-				// Select all chord notes
 				chordNotes.forEach(function (note) {
 					return tonnetzSystemState.selectedNotes.add(note);
 				});
 			}
 			tonnetzSystemState.selectedNotes = new Set(tonnetzSystemState.selectedNotes); // Trigger reactivity
-			// Clear single note highlight when using multi-select
 			tonnetzSystemState.highlightedNote = null;
 		} else {
-			// Normal single selection: clear everything and select chord notes
 			tonnetzSystemState.highlightedNote = null;
 			tonnetzSystemState.selectedNotes.clear();
 			chordNotes.forEach(function (note) {
@@ -1032,7 +993,6 @@
 			tonnetzSystemState.selectedNotes = new Set(tonnetzSystemState.selectedNotes); // Trigger reactivity
 		}
 
-		// Trigger debounced chord calculation and highlight update
 		debouncedChordCalculation(tonnetzSystemState);
 	}
 
@@ -1069,7 +1029,6 @@
 			.on('contextmenu', function (e: Event) {
 				return e.preventDefault();
 			})
-			// Replace the existing mouseup handler with:
 			.on('mouseup', function (event: MouseEvent) {
 				eventSystem.emit('MOUSE_UP', {
 					x: event.clientX,
@@ -1083,19 +1042,16 @@
 		svg.call(zoom.transform, d3.zoomIdentity.translate(width / 2, height / 2));
 		createGrid();
 
-		// Add event listeners
 		window.addEventListener('resize', handleResize);
 		window.addEventListener('keydown', tonnetzSystemState.handleKeyDown);
 		window.addEventListener('keyup', tonnetzSystemState.handleKeyUp);
 		window.addEventListener('mouseup', handleGlobalMouseUp);
 
-		// Cleanup function
 		const cleanup = function () {
 			window.removeEventListener('resize', handleResize);
 			window.removeEventListener('keydown', tonnetzSystemState.handleKeyDown);
 			window.removeEventListener('keyup', tonnetzSystemState.handleKeyUp);
 			window.removeEventListener('mouseup', handleGlobalMouseUp);
-			// Clean up any other resources if needed
 		};
 
 		return cleanup;
@@ -1133,7 +1089,6 @@
 		});
 	}
 
-	// Visibility functions
 	function isTriangleVisible(pos: { x: number; y: number }, transform: d3.ZoomTransform) {
 		return Utils.isTriangleVisible(pos, transform, CONFIG.baseTriangleSize);
 	}
@@ -1146,7 +1101,6 @@
 		return Utils.pitchClass(q, r, root, tonnetzSystemState.qInterval, tonnetzSystemState.rInterval);
 	}
 
-	// Throttled drag update to prevent excessive DOM updates
 	function throttledDragUpdate(tonnetzSystemState) {
 		if (tonnetzSystemState.throttledDragTimeout) return;
 
@@ -1160,15 +1114,12 @@
 		eventSystem.emit('CONTROL_PANEL_UPDATE', tonnetzSystemState);
 	}
 
-	// Fast highlight updates without full redraw - optimized with native DOM methods
 	function updateHighlightsOnly(tonnetzSystemState) {
 		if (!gridGroup) return;
 
-		// Use native DOM methods for better performance
 		const svgElement = gridGroup.node();
 		if (!svgElement) return;
 
-		// Update triangle highlights using native DOM
 		const triangles = svgElement.querySelectorAll(
 			'polygon[data-triangle-type]'
 		) as NodeListOf<SVGPolygonElement>;
@@ -1176,11 +1127,9 @@
 			const triangleType = triangle.getAttribute('data-triangle-type');
 			if (!triangleType) continue;
 
-			// Update chord highlighting
 			const isChordHighlight = isChordHighlighted(triangleType, tonnetzSystemState);
 			triangle.classList.toggle('highlighted-triangle', isChordHighlight);
 
-			// Update scale highlighting for triangles
 			let isScaleHighlight = false;
 			if (tonnetzSystemState.highlightedScaleNotes.size > 0) {
 				const points = triangle.getAttribute('points');
@@ -1190,7 +1139,6 @@
 						return { x, y };
 					});
 
-					// Check if ALL vertices are in the scale
 					isScaleHighlight = coords.every(function (coord) {
 						const { q, r } = cartesianToHex(coord.x, coord.y);
 						const noteName = getPitchWithOctave(
@@ -1206,7 +1154,6 @@
 			triangle.classList.toggle('scale-highlight', isScaleHighlight);
 		}
 
-		// Update vertex highlights using native DOM
 		const vertices = svgElement.querySelectorAll(
 			'circle[data-note]'
 		) as NodeListOf<SVGCircleElement>;
@@ -1214,11 +1161,9 @@
 			const noteName = vertex.getAttribute('data-note');
 			if (!noteName) continue;
 
-			// Update note highlighting
 			const isNoteHighlight = isNoteHighlighted(noteName, tonnetzSystemState);
 			vertex.classList.toggle('highlighted-vertex', isNoteHighlight);
 
-			// Update scale highlighting for vertices
 			const isScaleHighlight = isScaleHighlighted(noteName, tonnetzSystemState);
 			vertex.classList.toggle('scale-highlight', isScaleHighlight);
 		}
@@ -1228,7 +1173,6 @@
 		currentTransform = transform;
 		gridGroup.selectAll('*').remove();
 
-		// Create groups
 		const groups = [
 			'triangles',
 			'vertices',
@@ -1251,7 +1195,6 @@
 		}> = [];
 		const vertexData: Array<{ pos: { x: number; y: number }; label: string }> = [];
 
-		// Collect data
 		for (let row = viewBounds.minRow; row <= viewBounds.maxRow; row++) {
 			for (let col = viewBounds.minCol; col <= viewBounds.maxCol; col++) {
 				const pos = {
@@ -1262,7 +1205,6 @@
 
 				triangleData.push({ pos, isUp, row, col });
 
-				// Collect unique vertices
 				getTriangleVertices(pos, isUp).forEach(function (v) {
 					const key = `${v.x.toFixed(1)},${v.y.toFixed(1)}`;
 					if (!uniqueVertices.has(key)) {
@@ -1277,7 +1219,6 @@
 			}
 		}
 
-		// Create elements
 		triangleData.forEach(function ({ pos, isUp, row, col }) {
 			createTriangleBase(triangles, innerTriangles, pos, isUp, row, col);
 			if (isTriangleVisible(pos, transform)) {
@@ -1302,10 +1243,8 @@
 	}
 </script>
 
-<!-- Control Panel -->
 <ControlPanel
 	bind:tonnetzSystemState
-	bind:midiFile
 	{getHighlightedChords}
 	{getCoordinatePattern}
 	{getCoordinateForNote}
@@ -1318,7 +1257,7 @@
 	{clearScale}
 	{triggerUpdate}
 />
+<!-- {handleFileInputChange}
+	{toggleMidiPlay} -->
 
-<div bind:this={container} class="tonnetz-container">
-	<!-- SVG will be appended here by D3 -->
-</div>
+<div bind:this={container} class="tonnetz-container"></div>

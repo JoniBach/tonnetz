@@ -18,9 +18,9 @@
 		applyScale,
 		applyMode,
 		clearScale,
-		triggerUpdate,
-		handleFileInputChange,
-		toggleMidiPlay
+		triggerUpdate
+		// handleFileInputChange,
+		// toggleMidiPlay
 	} = $props();
 
 	// Audio state
@@ -91,7 +91,7 @@
 		<span>🔊 Audio: {isPlaying ? 'Playing' : 'Ready'}</span>
 	</div>
 
-	<div class="control-row">
+	<!-- <div class="control-row">
 		<div class="file-input">
 			<input
 				type="file"
@@ -112,7 +112,7 @@
 		disabled={!tonnetzSystemState.midiPlayer}
 	>
 		{tonnetzSystemState.isMidiPlaying ? '⏹ Stop MIDI' : '▶ Play MIDI'}
-	</button>
+	</button> -->
 
 	<!-- Audio Settings -->
 	<div class="audio-settings">
