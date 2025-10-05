@@ -7,7 +7,6 @@
 
 	let {
 		tonnetzSystemState = $bindable(),
-		midiFile = $bindable(),
 
 		getHighlightedChords,
 		getCoordinatePattern,
@@ -19,7 +18,9 @@
 		applyScale,
 		applyMode,
 		clearScale,
-		triggerUpdate
+		triggerUpdate,
+		handleFileInputChange,
+		toggleMidiPlay
 	} = $props();
 
 	// Audio state
@@ -31,20 +32,6 @@
 		tempo: CONFIG.audio.tempo
 	});
 	let fileInput = $state(null);
-
-	function handleFileInputChange(event) {
-		const file = event.target.files[0];
-		if (file) {
-			const reader = new FileReader();
-			reader.onload = (e) => {
-				const arrayBuffer = e.target.result;
-				const midiData = new Uint8Array(arrayBuffer);
-
-				midiFile = midiData;
-			};
-			reader.readAsArrayBuffer(file);
-		}
-	}
 
 	// Derived state for highlighted chords
 	const highlightedChords = $derived(() => getHighlightedChords(tonnetzSystemState));
@@ -106,12 +93,26 @@
 
 	<div class="control-row">
 		<div class="file-input">
-			<input type="file" id="file" accept=".mid" onchange={handleFileInputChange} />
+			<input
+				type="file"
+				id="file"
+				accept=".mid"
+				onchange={(e) => handleFileInputChange(e, tonnetzSystemState)}
+			/>
 			<label for="file" class="file-label"
-				>{fileInput ? fileInput.files[0].name : 'No file selected'}</label
+				>{tonnetzSystemState.midiFile
+					? tonnetzSystemState.midiFile.name
+					: 'No file selected'}</label
 			>
 		</div>
 	</div>
+
+	<button
+		onclick={(e) => toggleMidiPlay(e, tonnetzSystemState)}
+		disabled={!tonnetzSystemState.midiPlayer}
+	>
+		{tonnetzSystemState.isMidiPlaying ? '⏹ Stop MIDI' : '▶ Play MIDI'}
+	</button>
 
 	<!-- Audio Settings -->
 	<div class="audio-settings">
