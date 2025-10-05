@@ -495,49 +495,6 @@
 		currentlyPlayingNotes.clear();
 	};
 
-	/**
-	 * Legacy function for compatibility - now triggers sustained playback
-	 * @param {string[]} notes - Array of note names
-	 * @param {string} mode - 'chord', 'arpeggio', or 'sequential'
-	 */
-	const playNotes = async (notes, mode = 'arpeggio') => {
-		await sustainNotes(notes);
-	};
-
-	/**
-	 * Stop all currently playing notes
-	 */
-	const stopAudio = () => {
-		stopSustainedNotes();
-		if (synth) {
-			synth.releaseAll();
-		}
-	};
-
-	/**
-	 * Update audio settings
-	 */
-	const updateAudioSettings = (settings) => {
-		if (synth && settings.volume !== undefined) {
-			synth.volume.value = settings.volume;
-		}
-		if (synth && settings.instrument) {
-			// Simple instrument switching by changing oscillator type
-			const oscTypes = {
-				synth: 'triangle',
-				piano: 'sine',
-				guitar: 'sawtooth',
-				bass: 'square'
-			};
-			if (oscTypes[settings.instrument]) {
-				synth.set({ oscillator: { type: oscTypes[settings.instrument] } });
-			}
-		}
-	};
-
-	/**
-	 * Dispose of audio resources
-	 */
 	const disposeAudio = () => {
 		if (synth) {
 			synth.dispose();
@@ -1285,36 +1242,6 @@
 		}
 	}
 
-	function handleFileInputChange(event: Event, tonnetzSystemState) {
-		const input = event.target as HTMLInputElement;
-		if (!input.files?.length || !tonnetzSystemState.midiPlayer) return;
-
-		const file = input.files[0];
-
-		tonnetzSystemState.midiPlayer
-			.load(file)
-			.then(() => {
-				// Reset Tonnetz state when a new file is loaded
-				tonnetzSystemState.selectedNotes.clear();
-				tonnetzSystemState.highlightedNote = null;
-				tonnetzSystemState.isPlaying = false;
-			})
-			.catch((err) => {
-				console.error('Failed to load MIDI:', err);
-			});
-	}
-	async function toggleMidiPlay(e, tonnetzSystemState) {
-		if (!tonnetzSystemState.midiPlayer) return;
-
-		if (tonnetzSystemState.isPlaying) {
-			tonnetzSystemState.midiPlayer.stop();
-			tonnetzSystemState.isPlaying = false;
-		} else {
-			await tonnetzSystemState.midiPlayer.play();
-			tonnetzSystemState.isPlaying = true;
-		}
-	}
-
 	function highlightChord(chordType: string, tonnetzSystemState) {
 		const chordNotes = getChordNotes(chordType, tonnetzSystemState);
 
@@ -1599,7 +1526,5 @@
 	{clearScale}
 	{triggerUpdate}
 />
-<!-- {handleFileInputChange}
-	{toggleMidiPlay} -->
 
 <div bind:this={container} class="tonnetz-container"></div>
