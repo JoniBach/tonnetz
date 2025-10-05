@@ -1,7 +1,7 @@
 import { onMount } from 'svelte';
 import * as d3 from 'd3';
 import { CONFIG } from './config.js';
-import { NOTES, NOTE_TO_SEMITONE, INTERVAL_NAMES, createGeometryConstants } from './constants.js';
+import { NOTES, NOTE_TO_SEMITONE, INTERVAL_NAMES, createGeometryConstants } from './utils.js';
 import * as Utils from './utils.js';
 import ControlPanel from './ControlPanel.svelte';
 import './tonnetz.css';

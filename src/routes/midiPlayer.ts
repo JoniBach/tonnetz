@@ -1,3 +1,6 @@
+import type { Midi } from '@tonejs/midi';
+import * as Tone from 'tone';
+
 export class MidiPlayer {
 	synth: Tone.PolySynth | null = null;
 	midiData: Midi | null = null;

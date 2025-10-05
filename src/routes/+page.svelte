@@ -1,15 +1,196 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import * as d3 from 'd3';
-	import { CONFIG } from './config.js';
-	import { NOTES, NOTE_TO_SEMITONE, INTERVAL_NAMES, createGeometryConstants } from './constants.js';
+	import * as Tone from 'tone';
 	import * as Utils from './utils.js';
+	import { CONFIG } from './config.js';
+	import { NOTES, NOTE_TO_SEMITONE, INTERVAL_NAMES, createGeometryConstants } from './utils.js';
 	import ControlPanel from './ControlPanel.svelte';
 	import './tonnetz.css';
-	import { createTonnetzSystem } from './tonnetzSystem.js';
-	import { MidiPlayer } from './midiPlayer.js';
-	import { EventSystem } from './tonnetzSystem.js';
-	import { initAudio, sustainNotes, stopSustainedNotes, disposeAudio } from './simple-audio.js';
+
+	// Event System
+	type EventHandler<T = any> = (data: T) => void;
+	type EventHandlers = Map<string, Set<EventHandler>>;
+
+	// Audio state
+	interface AudioState {
+		audioContext: AudioContext | null;
+		activeOscillators: Set<OscillatorNode>;
+		activeAudioBuffers: Set<AudioBufferSourceNode>;
+	}
+
+	// Tonnetz state
+	interface TonnetzState {
+		currentRootNote: number;
+		showMusicalLabels: boolean;
+		singleOctave: boolean;
+		currentTonnetzName: string;
+		qInterval: number;
+		rInterval: number;
+		highlightedNote: string | null;
+		isDragging: boolean;
+		isShiftPressed: boolean;
+		selectedNotes: Set<string>;
+		selectedChordPattern: string | null;
+		chordPatternRoot: string | null;
+		highlightedPatternNotes: Set<string>;
+		selectedScale: string | null;
+		selectedMode: string | null;
+		scaleRoot: string | null;
+		highlightedScaleNotes: Set<string>;
+		coordinateCache: Map<string, { q: number; r: number }>;
+		coordinatePatternCache: Map<string, string>;
+		highlightedChordsCache: Set<string>;
+		lastSelectedNotesHash: string;
+		debouncedChordTimeout: ReturnType<typeof setTimeout> | null;
+		throttledDragTimeout: ReturnType<typeof setTimeout> | null;
+		audioState: AudioState;
+		autoPlayTimeout: ReturnType<typeof setTimeout> | null;
+		isPlaying: boolean;
+		isMidiPlaying: boolean;
+	}
+
+	// Initialize audio state
+	const createAudioState = (): AudioState => ({
+		audioContext: null,
+		activeOscillators: new Set(),
+		activeAudioBuffers: new Set()
+	});
+
+	// Event system singleton
+	class EventSystem {
+		private handlers: EventHandlers = new Map();
+		private static instance: EventSystem;
+
+		private constructor() {}
+
+		public static getInstance(): EventSystem {
+			if (!EventSystem.instance) EventSystem.instance = new EventSystem();
+			return EventSystem.instance;
+		}
+
+		on<T = any>(event: string, handler: EventHandler<T>): () => void {
+			if (!this.handlers.has(event)) this.handlers.set(event, new Set());
+			const handlers = this.handlers.get(event)!;
+			handlers.add(handler);
+			return () => this.off(event, handler);
+		}
+
+		off(event: string, handler: EventHandler): void {
+			if (!this.handlers.has(event)) return;
+			const handlers = this.handlers.get(event)!;
+			handlers.delete(handler);
+			if (handlers.size === 0) this.handlers.delete(event);
+		}
+
+		emit<T = any>(event: string, data?: T): void {
+			if (!this.handlers.has(event)) return;
+			const handlers = new Set(this.handlers.get(event));
+			handlers.forEach((handler) => {
+				try {
+					handler(data);
+				} catch (err) {
+					console.error(`Error in event handler for ${event}:`, err);
+				}
+			});
+		}
+
+		clear(): void {
+			this.handlers.clear();
+		}
+	}
+
+	// Tonnetz system factory
+	const createTonnetzSystem = (config) => {
+		const eventSystem = EventSystem.getInstance();
+
+		const createState = (): TonnetzState => ({
+			currentRootNote: config.music.rootNote,
+			showMusicalLabels: true,
+			singleOctave: config.music.singleOctave,
+			currentTonnetzName: config.tonnetz.name,
+			qInterval: config.tonnetz.qInterval,
+			rInterval: config.tonnetz.rInterval,
+			highlightedNote: null,
+			isDragging: false,
+			isShiftPressed: false,
+			selectedNotes: new Set<string>(),
+			selectedChordPattern: null,
+			chordPatternRoot: null,
+			highlightedPatternNotes: new Set<string>(),
+			selectedScale: null,
+			selectedMode: null,
+			scaleRoot: null,
+			highlightedScaleNotes: new Set<string>(),
+			coordinateCache: new Map(),
+			coordinatePatternCache: new Map(),
+			highlightedChordsCache: new Set(),
+			lastSelectedNotesHash: '',
+			debouncedChordTimeout: null,
+			throttledDragTimeout: null,
+			audioState: createAudioState(),
+			autoPlayTimeout: null,
+			isPlaying: false,
+			isMidiPlaying: false,
+			midiPlayer: null
+		});
+
+		const state = createState();
+
+		// Event handlers
+		const handleMouseDown = (event: MouseEvent) => {
+			if (event.button !== 0) return;
+			eventSystem.emit('MOUSE_DOWN', {
+				x: event.clientX,
+				y: event.clientY,
+				target: event.target,
+				shiftKey: event.shiftKey
+			});
+		};
+
+		const handleMouseUp = (event: MouseEvent) => {
+			if (state.isDragging) {
+				state.isDragging = false;
+				eventSystem.emit('MOUSE_UP', { x: event.clientX, y: event.clientY, target: event.target });
+			}
+		};
+
+		const handleKeyDown = (event: KeyboardEvent) => {
+			if (event.key === 'Shift') state.isShiftPressed = true;
+			eventSystem.emit('KEY_DOWN', { key: event.key });
+		};
+
+		const handleKeyUp = (event: KeyboardEvent) => {
+			if (event.key === 'Shift') state.isShiftPressed = false;
+			eventSystem.emit('KEY_UP', { key: event.key });
+		};
+
+		const setupEventListeners = (container: HTMLElement, svg: SVGSVGElement) => {
+			window.addEventListener('mouseup', handleMouseUp);
+			window.addEventListener('keydown', handleKeyDown);
+			window.addEventListener('keyup', handleKeyUp);
+			d3.select(svg).on('mousedown', handleMouseDown);
+
+			const unsubscribe = eventSystem.on('STATE_UPDATE', () => eventSystem.emit('UPDATE_VIEW'));
+
+			return () => {
+				window.removeEventListener('mouseup', handleMouseUp);
+				window.removeEventListener('keydown', handleKeyDown);
+				window.removeEventListener('keyup', handleKeyUp);
+				d3.select(svg).on('mousedown', null);
+				unsubscribe();
+			};
+		};
+
+		const cleanup = () => {
+			Tone.Transport.cancel();
+			if (state.debouncedChordTimeout) clearTimeout(state.debouncedChordTimeout);
+			if (state.throttledDragTimeout) clearTimeout(state.throttledDragTimeout);
+		};
+
+		return { ...state, setupEventListeners, cleanup };
+	};
+
 	type ElementType = 'triangle' | 'circle';
 
 	interface HandleHoverParams {
@@ -26,19 +207,16 @@
 	let container: HTMLDivElement;
 	let svg: d3.Selection<SVGSVGElement, unknown, null, undefined>;
 	let gridGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
-	let midiFile: Uint8Array | null = null;
 	let currentTransform: d3.ZoomTransform = d3.zoomIdentity;
+	let synth = null;
+	let isInitialized = false;
+	let currentlyPlayingNotes = new Set();
+	let sustainedNotes = new Map(); // Map of note -> voice for sustained playback
 
 	const geometryConstants = createGeometryConstants(CONFIG);
 	const eventSystem = EventSystem.getInstance();
 
 	let tonnetzSystemState = $state(createTonnetzSystem(CONFIG));
-	// const unsubscribeMidiNotes = eventSystem.on<Set<string>>('MIDI_ACTIVE_NOTES', (notes) => {
-	// 	// Update Tonnetz state without breaking existing logic
-	// 	tonnetzSystemState.selectedNotes = new Set(notes);
-	// 	tonnetzSystemState.highlightedNote = null; // optional: clear single highlight
-	// 	eventSystem.emit('STATE_UPDATE');
-	// });
 
 	$effect(() => {
 		const notes = [
@@ -122,12 +300,6 @@
 		handleResize();
 		window.addEventListener('resize', handleResize);
 
-		// tonnetzSystemState.midiPlayer = new MidiPlayer(-10); // optional: pass volume
-		// tonnetzSystemState.midiPlayer.onUpdate = (activeNotes) => {
-		// 	// Send active notes to Tonnetz via EventSystem
-		// 	eventSystem.emit('MIDI_ACTIVE_NOTES', activeNotes);
-		// };
-
 		return function () {
 			cleanupListeners();
 			unsubscribeMouseUp();
@@ -139,6 +311,213 @@
 			tonnetzSystemState.cleanup();
 		};
 	});
+
+	function getPitchWithOctave(q: number, r: number, rootNote: string, tonnetzSystemState) {
+		return Utils.getPitchWithOctave(
+			q,
+			r,
+			rootNote,
+			tonnetzSystemState.singleOctave,
+			tonnetzSystemState.qInterval,
+			tonnetzSystemState.rInterval,
+			NOTES,
+			NOTE_TO_SEMITONE
+		);
+	}
+
+	function getTriadCombinations(arr: string[]) {
+		return Utils.getTriadCombinations(arr);
+	}
+
+	function applyPattern(pattern: [number, number][], rootNote: string, tonnetzSystemState) {
+		return Utils.applyPattern(
+			pattern,
+			rootNote,
+			getNoteCoordsFromCache,
+			getPitchWithOctave,
+			tonnetzSystemState.currentRootNote,
+			tonnetzSystemState
+		);
+	}
+
+	function cartesianToHex(x: number, y: number) {
+		return Utils.cartesianToHex(x, y, CONFIG.baseTriangleSize, geometryConstants.triHeight);
+	}
+
+	function getAllHighlightedNotes(tonnetzSystemState): string[] {
+		return Utils.getAllHighlightedNotes(
+			tonnetzSystemState.highlightedNote,
+			tonnetzSystemState.selectedNotes,
+			tonnetzSystemState.highlightedPatternNotes
+		);
+	}
+
+	function getCentroid(vertices: { x: number; y: number }[]) {
+		return Utils.getCentroid(vertices);
+	}
+
+	function getTriangleVertices(pos: { x: number; y: number }, up: boolean) {
+		return Utils.getTriangleVertices(
+			pos,
+			up,
+			geometryConstants.halfSize,
+			geometryConstants.triHeight
+		);
+	}
+
+	function getVisibleBounds(transform: d3.ZoomTransform) {
+		return Utils.getVisibleBounds(transform, CONFIG.baseTriangleSize, geometryConstants.spacing);
+	}
+
+	function isTriangleVisible(pos: { x: number; y: number }, transform: d3.ZoomTransform) {
+		return Utils.isTriangleVisible(pos, transform, CONFIG.baseTriangleSize);
+	}
+
+	function mod12(n: number) {
+		return Utils.mod12(n);
+	}
+
+	function pitchClass(q: number, r: number, root = 0, tonnetzSystemState) {
+		return Utils.pitchClass(q, r, root, tonnetzSystemState.qInterval, tonnetzSystemState.rInterval);
+	}
+
+	/**
+	 * Initialize Tone.js audio context
+	 */
+	const initAudio = async () => {
+		if (isInitialized) return;
+
+		try {
+			// Start Tone.js audio context
+			if (Tone.context.state !== 'running') {
+				await Tone.start();
+			}
+
+			// Create a simple polyphonic synthesizer
+			synth = new Tone.PolySynth(Tone.Synth, {
+				oscillator: { type: 'triangle' },
+				envelope: { attack: 0.1, decay: 0.2, sustain: 0.3, release: 1 },
+				volume: -12
+			}).toDestination();
+
+			isInitialized = true;
+			console.log('Audio initialized successfully');
+		} catch (error) {
+			console.error('Failed to initialize audio:', error);
+		}
+	};
+
+	/**
+	 * Start sustained playback of notes (continuous until stopped)
+	 * @param {string[]} notes - Array of note names to sustain
+	 */
+	const sustainNotes = async (notes) => {
+		if (!isInitialized) {
+			await initAudio();
+		}
+
+		if (!synth || !notes) return;
+
+		// Convert notes to proper format (add octave if missing) - optimized
+		const toneNotes = notes.map((note) => (note.match(/\d/) ? note : `${note}4`));
+
+		// Quick check if notes have actually changed to avoid unnecessary work
+		const newNotesSet = new Set(toneNotes);
+		const currentNotesSet = new Set(sustainedNotes.keys());
+
+		// Only proceed if there are actual changes
+		if (
+			newNotesSet.size === currentNotesSet.size &&
+			[...newNotesSet].every((note) => currentNotesSet.has(note))
+		) {
+			return; // No changes, skip processing
+		}
+
+		// Stop notes that are no longer selected
+		for (const note of currentNotesSet) {
+			if (!newNotesSet.has(note)) {
+				synth.triggerRelease(note);
+				sustainedNotes.delete(note);
+			}
+		}
+
+		// Start new notes that aren't already playing
+		for (const note of newNotesSet) {
+			if (!currentNotesSet.has(note)) {
+				synth.triggerAttack(note);
+				sustainedNotes.set(note, true);
+			}
+		}
+
+		currentlyPlayingNotes = newNotesSet;
+	};
+
+	/**
+	 * Stop all sustained notes
+	 */
+	const stopSustainedNotes = () => {
+		for (const [note] of sustainedNotes.entries()) {
+			try {
+				synth.triggerRelease(note);
+			} catch (error) {
+				// Note might already be released
+			}
+		}
+		sustainedNotes.clear();
+		currentlyPlayingNotes.clear();
+	};
+
+	/**
+	 * Legacy function for compatibility - now triggers sustained playback
+	 * @param {string[]} notes - Array of note names
+	 * @param {string} mode - 'chord', 'arpeggio', or 'sequential'
+	 */
+	const playNotes = async (notes, mode = 'arpeggio') => {
+		await sustainNotes(notes);
+	};
+
+	/**
+	 * Stop all currently playing notes
+	 */
+	const stopAudio = () => {
+		stopSustainedNotes();
+		if (synth) {
+			synth.releaseAll();
+		}
+	};
+
+	/**
+	 * Update audio settings
+	 */
+	const updateAudioSettings = (settings) => {
+		if (synth && settings.volume !== undefined) {
+			synth.volume.value = settings.volume;
+		}
+		if (synth && settings.instrument) {
+			// Simple instrument switching by changing oscillator type
+			const oscTypes = {
+				synth: 'triangle',
+				piano: 'sine',
+				guitar: 'sawtooth',
+				bass: 'square'
+			};
+			if (oscTypes[settings.instrument]) {
+				synth.set({ oscillator: { type: oscTypes[settings.instrument] } });
+			}
+		}
+	};
+
+	/**
+	 * Dispose of audio resources
+	 */
+	const disposeAudio = () => {
+		if (synth) {
+			synth.dispose();
+			synth = null;
+		}
+		isInitialized = false;
+	};
+
 	function applyChordPattern(patternName: string, rootNote: string, tonnetzSystemState) {
 		const pattern = CONFIG.chordPatterns.presets[
 			patternName as keyof typeof CONFIG.chordPatterns.presets
@@ -176,17 +555,6 @@
 		if (gridGroup) throttledDragUpdate(tonnetzSystemState);
 	}
 
-	function applyPattern(pattern: [number, number][], rootNote: string, tonnetzSystemState) {
-		return Utils.applyPattern(
-			pattern,
-			rootNote,
-			getNoteCoordsFromCache,
-			getPitchWithOctave,
-			tonnetzSystemState.currentRootNote,
-			tonnetzSystemState
-		);
-	}
-
 	function applyScale(scaleName: string, rootNote: string, tonnetzSystemState) {
 		const pattern = CONFIG.scales[scaleName as keyof typeof CONFIG.scales] as [number, number][];
 		if (!pattern?.length) return;
@@ -195,10 +563,6 @@
 		tonnetzSystemState.scaleRoot = rootNote;
 		tonnetzSystemState.highlightedScaleNotes = applyPattern(pattern, rootNote, tonnetzSystemState);
 		if (gridGroup) throttledDragUpdate(tonnetzSystemState);
-	}
-
-	function cartesianToHex(x: number, y: number) {
-		return Utils.cartesianToHex(x, y, CONFIG.baseTriangleSize, geometryConstants.triHeight);
 	}
 
 	function changeTonnetzPreset(presetName: string, tonnetzSystemState) {
@@ -546,18 +910,6 @@
 		}, 16); // ~60fps throttle
 	}
 
-	function getAllHighlightedNotes(tonnetzSystemState): string[] {
-		return Utils.getAllHighlightedNotes(
-			tonnetzSystemState.highlightedNote,
-			tonnetzSystemState.selectedNotes,
-			tonnetzSystemState.highlightedPatternNotes
-		);
-	}
-
-	function getCentroid(vertices: { x: number; y: number }[]) {
-		return Utils.getCentroid(vertices);
-	}
-
 	function getChordFromNotes(notes: string[], tonnetzSystemState) {
 		if (notes.length !== 3) return null;
 
@@ -754,23 +1106,6 @@
 		return coords;
 	}
 
-	function getPitchWithOctave(q: number, r: number, rootNote: string, tonnetzSystemState) {
-		return Utils.getPitchWithOctave(
-			q,
-			r,
-			rootNote,
-			tonnetzSystemState.singleOctave,
-			tonnetzSystemState.qInterval,
-			tonnetzSystemState.rInterval,
-			NOTES,
-			NOTE_TO_SEMITONE
-		);
-	}
-
-	function getTriadCombinations(arr: string[]) {
-		return Utils.getTriadCombinations(arr);
-	}
-
 	function getTriangleChord(row: number, col: number, isUp: boolean, tonnetzSystemState): string {
 		const pos = { x: col * geometryConstants.spacing.col, y: row * geometryConstants.spacing.row };
 		const vertices = getTriangleVertices(pos, isUp);
@@ -810,19 +1145,6 @@
 		const chordName = getTriangleChord(row, col, isUp, tonnetzSystemState);
 		const triangleOrientation = isUp ? 'up' : 'down';
 		return `${chordName}-${triangleOrientation}`;
-	}
-
-	function getTriangleVertices(pos: { x: number; y: number }, up: boolean) {
-		return Utils.getTriangleVertices(
-			pos,
-			up,
-			geometryConstants.halfSize,
-			geometryConstants.triHeight
-		);
-	}
-
-	function getVisibleBounds(transform: d3.ZoomTransform) {
-		return Utils.getVisibleBounds(transform, CONFIG.baseTriangleSize, geometryConstants.spacing);
 	}
 
 	function handleGlobalMouseUp(tonnetzSystemState) {
@@ -1087,18 +1409,6 @@
 				getPitchWithOctave(q, r, tonnetzSystemState.currentRootNote, tonnetzSystemState)
 			);
 		});
-	}
-
-	function isTriangleVisible(pos: { x: number; y: number }, transform: d3.ZoomTransform) {
-		return Utils.isTriangleVisible(pos, transform, CONFIG.baseTriangleSize);
-	}
-
-	function mod12(n: number) {
-		return Utils.mod12(n);
-	}
-
-	function pitchClass(q: number, r: number, root = 0, tonnetzSystemState) {
-		return Utils.pitchClass(q, r, root, tonnetzSystemState.qInterval, tonnetzSystemState.rInterval);
 	}
 
 	function throttledDragUpdate(tonnetzSystemState) {

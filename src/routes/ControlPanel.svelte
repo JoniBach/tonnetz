@@ -1,6 +1,6 @@
 <script>
 	import { CONFIG } from './config.js';
-	import { NOTES, INTERVAL_NAMES } from './constants.js';
+	import { NOTES } from './utils.js';
 
 	// Props - data passed from parent component
 	// export let tonnetzSystemState.highlightedNote;
