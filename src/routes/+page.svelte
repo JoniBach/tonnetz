@@ -376,10 +376,6 @@
 		);
 	}
 
-	function getVisibleBounds(transform: d3.ZoomTransform) {
-		return Utils.getVisibleBounds(transform, CONFIG.baseTriangleSize, geometryConstants.spacing);
-	}
-
 	function isTriangleVisible(pos: { x: number; y: number }, transform: d3.ZoomTransform) {
 		return Utils.isTriangleVisible(pos, transform, CONFIG.baseTriangleSize);
 	}
@@ -1433,7 +1429,11 @@
 		const [triangles, vertices, innerTriangles, innerCircles, labels, vertexLabels] = groups;
 
 		const uniqueVertices = new Set<string>();
-		const viewBounds = getVisibleBounds(transform);
+		const viewBounds = Utils.getVisibleBounds(
+			transform,
+			CONFIG.baseTriangleSize,
+			geometryConstants.spacing
+		);
 		const triangleData: Array<{
 			pos: { x: number; y: number };
 			isUp: boolean;
