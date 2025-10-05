@@ -48,6 +48,7 @@
 		autoPlayTimeout: ReturnType<typeof setTimeout> | null;
 		isPlaying: boolean;
 		isMidiPlaying: boolean;
+		gridGroup: d3.Selection<SVGGElement, unknown, null, undefined> | null;
 	}
 
 	// Initialize audio state
@@ -132,7 +133,8 @@
 			autoPlayTimeout: null,
 			isPlaying: false,
 			isMidiPlaying: false,
-			midiPlayer: null
+			midiPlayer: null,
+			gridGroup: null
 		});
 
 		const state = createState();
@@ -206,7 +208,8 @@
 
 	let container: HTMLDivElement;
 	let svg: d3.Selection<SVGSVGElement, unknown, null, undefined>;
-	let gridGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
+
+	// let tonnetzSystemState.gridGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
 	let currentTransform: d3.ZoomTransform = d3.zoomIdentity;
 	let synth = null;
 	let isInitialized = false;
@@ -274,7 +277,10 @@
 				tonnetzSystemState.isDragging = false;
 			}
 
-			if (gridGroup && (tonnetzSystemState.selectedScale || tonnetzSystemState.selectedMode)) {
+			if (
+				tonnetzSystemState.gridGroup &&
+				(tonnetzSystemState.selectedScale || tonnetzSystemState.selectedMode)
+			) {
 				updateHighlightsOnly(tonnetzSystemState);
 			}
 		});
@@ -518,7 +524,7 @@
 
 		debouncedChordCalculation(tonnetzSystemState);
 
-		if (gridGroup) throttledDragUpdate(tonnetzSystemState);
+		if (tonnetzSystemState.gridGroup) throttledDragUpdate(tonnetzSystemState);
 	}
 
 	function applyMode(modeName: string, rootNote: string, tonnetzSystemState) {
@@ -537,7 +543,7 @@
 			rootNote,
 			tonnetzSystemState
 		);
-		if (gridGroup) throttledDragUpdate(tonnetzSystemState);
+		if (tonnetzSystemState.gridGroup) throttledDragUpdate(tonnetzSystemState);
 	}
 
 	function applyScale(scaleName: string, rootNote: string, tonnetzSystemState) {
@@ -547,7 +553,7 @@
 		tonnetzSystemState.selectedMode = null;
 		tonnetzSystemState.scaleRoot = rootNote;
 		tonnetzSystemState.highlightedScaleNotes = applyPattern(pattern, rootNote, tonnetzSystemState);
-		if (gridGroup) throttledDragUpdate(tonnetzSystemState);
+		if (tonnetzSystemState.gridGroup) throttledDragUpdate(tonnetzSystemState);
 	}
 
 	function changeTonnetzPreset(presetName: string, tonnetzSystemState) {
@@ -568,7 +574,7 @@
 		tonnetzSystemState.lastSelectedNotesHash = '';
 		debouncedChordCalculation(tonnetzSystemState);
 
-		if (gridGroup) updateHighlightsOnly(tonnetzSystemState);
+		if (tonnetzSystemState.gridGroup) updateHighlightsOnly(tonnetzSystemState);
 	}
 
 	function clearScale(tonnetzSystemState) {
@@ -576,7 +582,7 @@
 		tonnetzSystemState.selectedMode = null;
 		tonnetzSystemState.scaleRoot = null;
 		tonnetzSystemState.highlightedScaleNotes.clear();
-		if (gridGroup) updateHighlightsOnly(tonnetzSystemState);
+		if (tonnetzSystemState.gridGroup) updateHighlightsOnly(tonnetzSystemState);
 	}
 
 	function createCircleBase(
@@ -836,7 +842,7 @@
 				return e.button === 2 || e.type === 'wheel' || e.type === 'dblclick';
 			})
 			.on('zoom', function (e: d3.D3ZoomEvent<SVGSVGElement, unknown>) {
-				gridGroup.attr('transform', e.transform);
+				tonnetzSystemState.gridGroup.attr('transform', e.transform);
 				currentTransform = e.transform;
 				eventSystem.emit('ZOOM', { transform: e.transform });
 			})
@@ -1315,7 +1321,7 @@
 				});
 			});
 
-		gridGroup = svg.append('g');
+		tonnetzSystemState.gridGroup = svg.append('g');
 		svg.call(zoom.transform, d3.zoomIdentity.translate(width / 2, height / 2));
 		createGrid();
 
@@ -1380,9 +1386,9 @@
 	}
 
 	function updateHighlightsOnly(tonnetzSystemState) {
-		if (!gridGroup) return;
+		if (!tonnetzSystemState.gridGroup) return;
 
-		const svgElement = gridGroup.node();
+		const svgElement = tonnetzSystemState.gridGroup.node();
 		if (!svgElement) return;
 
 		// Batch DOM reads
@@ -1440,7 +1446,7 @@
 	}
 	function updateViewport(transform: d3.ZoomTransform, tonnetzSystemState) {
 		currentTransform = transform;
-		gridGroup.selectAll('*').remove();
+		tonnetzSystemState.gridGroup.selectAll('*').remove();
 
 		const groups = [
 			'triangles',
@@ -1450,7 +1456,7 @@
 			'labels',
 			'vertex-labels'
 		].map(function (cls) {
-			return gridGroup.append('g').attr('class', cls);
+			return tonnetzSystemState.gridGroup.append('g').attr('class', cls);
 		});
 		const [triangles, vertices, innerTriangles, innerCircles, labels, vertexLabels] = groups;
 
