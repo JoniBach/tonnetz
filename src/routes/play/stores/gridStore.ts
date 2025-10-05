@@ -90,28 +90,28 @@ function createGridStore() {
 		},
 
 		computeScales(width: number, height: number, padding = 50) {
+			// Keep a fixed scale
+			const scale = 1; // or multiply by your desired zoom factor
+
+			// Optional: center the grid based on viewport
 			const pointsArray = Array.from(pointsMap.values());
 			const xs = pointsArray.map((p) => p.x);
 			const ys = pointsArray.map((p) => p.y);
 
-			const minX = Math.min(...xs),
-				maxX = Math.max(...xs);
-			const minY = Math.min(...ys),
-				maxY = Math.max(...ys);
+			const minX = Math.min(...xs);
+			const maxX = Math.max(...xs);
+			const minY = Math.min(...ys);
+			const maxY = Math.max(...ys);
 
-			const dataWidth = maxX - minX;
-			const dataHeight = maxY - minY;
-			const scale = Math.min(
-				(width - 2 * padding) / dataWidth,
-				(height - 2 * padding) / dataHeight
-			);
+			const gridWidth = maxX - minX;
+			const gridHeight = maxY - minY;
 
-			const xOffset = (width - dataWidth * scale) / 2 - minX * scale;
-			const yOffset = (height - dataHeight * scale) / 2 - minY * scale;
+			const xOffset = (width - gridWidth) / 2 - minX;
+			const yOffset = (height - gridHeight) / 2 - minY;
 
 			return {
-				x: (x: number) => x * scale + xOffset,
-				y: (y: number) => y * scale + yOffset
+				x: (x: number) => x + xOffset,
+				y: (y: number) => y + yOffset
 			};
 		},
 
