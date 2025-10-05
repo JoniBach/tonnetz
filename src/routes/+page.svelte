@@ -210,7 +210,7 @@
 	let svg: d3.Selection<SVGSVGElement, unknown, null, undefined>;
 
 	// let tonnetzSystemState.gridGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
-	let currentTransform: d3.ZoomTransform = d3.zoomIdentity;
+	// let tonnetzSystemState.currentTransform: d3.ZoomTransform = d3.zoomIdentity;
 	let synth = null;
 	let isInitialized = false;
 	let currentlyPlayingNotes = new Set();
@@ -260,8 +260,8 @@
 		const controlPanelUpdateUnsubscribe = eventSystem.on('CONTROL_PANEL_UPDATE', (state) => {
 			updateHighlightsOnly(tonnetzSystemState);
 
-			if (currentTransform) {
-				updateViewport(currentTransform, tonnetzSystemState);
+			if (tonnetzSystemState.currentTransform) {
+				updateViewport(tonnetzSystemState.currentTransform, tonnetzSystemState);
 			}
 		});
 
@@ -286,7 +286,7 @@
 		});
 
 		const unsubscribeStateUpdate = eventSystem.on('STATE_UPDATE', function () {
-			updateViewport(currentTransform, tonnetzSystemState);
+			updateViewport(tonnetzSystemState.currentTransform, tonnetzSystemState);
 			updateHighlightsOnly(tonnetzSystemState);
 		});
 
@@ -665,7 +665,7 @@
 	}
 
 	function createGrid() {
-		updateViewport(currentTransform, tonnetzSystemState);
+		updateViewport(tonnetzSystemState.currentTransform, tonnetzSystemState);
 	}
 
 	function createInnerCircleElement(
@@ -843,7 +843,7 @@
 			})
 			.on('zoom', function (e: d3.D3ZoomEvent<SVGSVGElement, unknown>) {
 				tonnetzSystemState.gridGroup.attr('transform', e.transform);
-				currentTransform = e.transform;
+				tonnetzSystemState.currentTransform = e.transform;
 				eventSystem.emit('ZOOM', { transform: e.transform });
 			})
 			.on('end', function () {
@@ -1243,8 +1243,8 @@
 
 		svg.attr('width', newWidth).attr('height', newHeight);
 
-		if (currentTransform) {
-			updateViewport(currentTransform, tonnetzSystemState);
+		if (tonnetzSystemState.currentTransform) {
+			updateViewport(tonnetzSystemState.currentTransform, tonnetzSystemState);
 		}
 	}
 
@@ -1445,7 +1445,7 @@
 		});
 	}
 	function updateViewport(transform: d3.ZoomTransform, tonnetzSystemState) {
-		currentTransform = transform;
+		tonnetzSystemState.currentTransform = transform;
 		tonnetzSystemState.gridGroup.selectAll('*').remove();
 
 		const groups = [
