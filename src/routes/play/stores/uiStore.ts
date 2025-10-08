@@ -1,159 +1,171 @@
-import { writable } from 'svelte/store';
-import type { ElementState, ElementRef, InteractionContext } from './interactionTypes';
-import { COLORS } from './interactionTypes';
+import { writable, get } from 'svelte/store';
+import { gridStore, type Point, type Triangle } from './gridStore';
+
+export type ElementRef = { id: string; type: 'point' | 'triangle' };
+export type ElementState = 'ready' | 'active' | 'inactive' | 'drag-prev';
+export type InteractionContext = { shiftPressed: boolean; dragging: boolean };
 
 export interface NodeState {
 	interaction: ElementState;
-	selected?: boolean;
-	highlighted?: boolean;
 	dragging?: boolean;
 }
 
-export interface UIState {
+interface UIStoreState {
 	nodeStates: Record<string, NodeState>;
-	current?: ElementRef | null;
-	previous?: ElementRef | null;
-	shiftPressed: boolean;
-	dragging: boolean;
-	tooltipNode?: string | null;
-	contextMenuNode?: string | null;
+	current: ElementRef | null;
+	previous: ElementRef | null;
+	context: InteractionContext;
+	draggedNodes?: Set<string>;
 }
 
-const initialState: UIState = {
+const initialState: UIStoreState = {
 	nodeStates: {},
 	current: null,
 	previous: null,
-	shiftPressed: false,
-	dragging: false,
-	tooltipNode: null,
-	contextMenuNode: null
+	context: { shiftPressed: false, dragging: false },
+	draggedNodes: new Set()
 };
 
 export const uiStore = (() => {
-	const { subscribe, set, update } = writable<UIState>(initialState);
+	const { subscribe, update, set } = writable<UIStoreState>(initialState);
+
+	function togglePoint(id: string) {
+		update((s) => {
+			const state = s.nodeStates[id]?.interaction || 'ready';
+			s.nodeStates[id] = {
+				...(s.nodeStates[id] || {}),
+				interaction: state === 'active' ? 'inactive' : 'active'
+			};
+			return s;
+		});
+	}
+
+	function toggleTriangle(id: string) {
+		const tri = gridStore.getTriangleById(id);
+		if (!tri) return;
+		const states = tri.points.map((pid) => get(uiStore).nodeStates[pid]?.interaction || 'ready');
+		const allActive = states.every((s) => s === 'active');
+		const newState = allActive ? 'inactive' : 'active';
+		for (const pid of tri.points) {
+			setInteraction(pid, newState);
+		}
+	}
+
+	function setInteraction(id: string, state: ElementState) {
+		update((s) => {
+			s.nodeStates[id] = { ...(s.nodeStates[id] || {}), interaction: state };
+			return s;
+		});
+	}
 
 	return {
 		subscribe,
 		reset: () => set(initialState),
+		setInteraction,
 
-		// --- Element interaction ---
-		setCurrent: (el: ElementRef | null) =>
+		handleMouseDown(el: ElementRef) {
+			const { shiftPressed } = get(uiStore).context;
+			if (shiftPressed) {
+				if (el.type === 'point') togglePoint(el.id);
+				else if (el.type === 'triangle') toggleTriangle(el.id);
+			} else {
+				if (el.type === 'point') this.startDrag(el);
+				else if (el.type === 'triangle') {
+					const tri = gridStore.getTriangleById(el.id);
+					if (tri) this.startDrag(tri.points.map((id) => ({ id, type: 'point' })));
+				}
+			}
+		},
+
+		handleMouseEnter(el: ElementRef) {
+			if (!get(uiStore).context.dragging) return;
+			const targets =
+				el.type === 'point'
+					? [el]
+					: (gridStore.getTriangleById(el.id)?.points.map((id) => ({ id, type: 'point' })) ?? []);
+			this.updateDrag(targets);
+		},
+
+		handleMouseLeave(el: ElementRef) {
+			if (!get(uiStore).context.dragging) return;
+			const targets =
+				el.type === 'point'
+					? [el]
+					: (gridStore.getTriangleById(el.id)?.points.map((id) => ({ id, type: 'point' })) ?? []);
+			this.updateDrag(targets);
+		},
+
+		handleMouseUp() {
+			if (get(uiStore).context.dragging) {
+				this.endDrag();
+				update((s) => ({ ...s, context: { ...s.context, dragging: false } }));
+			}
+		},
+
+		handleKeyDown(e: KeyboardEvent) {
 			update((s) => {
-				if (s.current && s.current.id !== el?.id) s.previous = s.current;
-				s.current = el;
+				if (e.key === 'Shift') s.context.shiftPressed = true;
+				if (e.key === 'Escape') {
+					Object.keys(s.nodeStates).forEach((id) => (s.nodeStates[id].interaction = 'ready'));
+				}
 				return s;
-			}),
+			});
+		},
 
-		setPrevious: (el: ElementRef | null) =>
-			update((s) => {
-				s.previous = el;
-				return s;
-			}),
+		handleKeyUp(e: KeyboardEvent) {
+			if (e.key === 'Shift')
+				update((s) => ({ ...s, context: { ...s.context, shiftPressed: false } }));
+		},
 
-		setInteraction: (id: string, state: ElementState) =>
-			update((s) => {
-				s.nodeStates[id] = { ...(s.nodeStates[id] || {}), interaction: state };
-				return s;
-			}),
-
-		clearInteractions: () =>
-			update((s) => {
-				Object.keys(s.nodeStates).forEach((id) => {
-					s.nodeStates[id].interaction = 'ready';
-				});
-				s.current = null;
-				s.previous = null;
-				s.dragging = false;
-				return s;
-			}),
-
-		startDrag: (els: ElementRef | ElementRef[]) =>
+		startDrag(els: ElementRef | ElementRef[]) {
 			update((s) => {
 				const elements = Array.isArray(els) ? els : [els];
-				s.dragging = true;
-				s.current = elements[elements.length - 1]; // last element as current
-				s.previous = null;
-
+				s.context.dragging = true;
 				s.draggedNodes = new Set(elements.map((el) => el.id));
-
-				elements.forEach((el) => {
-					s.nodeStates[el.id] = {
-						...(s.nodeStates[el.id] || {}),
-						interaction: 'active',
-						dragging: true
-					};
-				});
-
+				elements.forEach(
+					(el) =>
+						(s.nodeStates[el.id] = {
+							...(s.nodeStates[el.id] || {}),
+							interaction: 'active',
+							dragging: true
+						})
+				);
 				return s;
-			}),
+			});
+		},
 
-		updateDrag: (els: ElementRef | ElementRef[]) =>
+		updateDrag(els: ElementRef | ElementRef[]) {
 			update((s) => {
-				if (!s.dragging) return s;
+				if (!s.context.dragging) return s;
 				const elements = Array.isArray(els) ? els : [els];
 				const newIds = new Set(elements.map((el) => el.id));
-
-				// Mark previous dragged nodes as drag-prev if they are not currently dragged
 				s.draggedNodes?.forEach((id) => {
-					if (!newIds.has(id)) {
-						s.nodeStates[id] = {
-							...(s.nodeStates[id] || {}),
-							interaction: 'drag-prev',
-							dragging: false
-						};
-					}
+					if (!newIds.has(id)) s.nodeStates[id].interaction = 'drag-prev';
 				});
-
-				// Update current dragged nodes
-				elements.forEach((el) => {
-					s.nodeStates[el.id] = {
-						...(s.nodeStates[el.id] || {}),
-						interaction: 'active',
-						dragging: true
-					};
-				});
-
-				s.previous = s.current;
-				s.current = elements[elements.length - 1];
-				s.draggedNodes = newIds; // overwrite with current set
+				elements.forEach(
+					(el) =>
+						(s.nodeStates[el.id] = {
+							...(s.nodeStates[el.id] || {}),
+							interaction: 'active',
+							dragging: true
+						})
+				);
+				s.draggedNodes = newIds;
 				return s;
-			}),
+			});
+		},
 
-		endDrag: () =>
+		endDrag() {
 			update((s) => {
-				// mark all nodes touched during drag as inactive (grey)
-				if (s.draggedNodes) {
-					s.draggedNodes.forEach((id) => {
-						s.nodeStates[id] = {
-							...(s.nodeStates[id] || {}),
-							interaction: 'inactive',
-							dragging: false
-						};
-					});
-				}
-
-				// also clear any previous drag-prev nodes that might remain
+				s.draggedNodes?.forEach((id) => (s.nodeStates[id].interaction = 'inactive'));
 				Object.keys(s.nodeStates).forEach((id) => {
-					if (s.nodeStates[id].interaction === 'drag-prev') {
-						s.nodeStates[id] = {
-							...s.nodeStates[id],
-							interaction: 'inactive',
-							dragging: false
-						};
-					}
+					if (s.nodeStates[id].interaction === 'drag-prev')
+						s.nodeStates[id].interaction = 'inactive';
 				});
-
-				s.current = null;
-				s.previous = null;
-				s.dragging = false;
+				s.context.dragging = false;
 				s.draggedNodes = new Set();
 				return s;
-			}),
-
-		setShift: (pressed: boolean) =>
-			update((s) => {
-				s.shiftPressed = pressed;
-				return s;
-			})
+			});
+		}
 	};
 })();

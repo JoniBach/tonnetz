@@ -5,11 +5,10 @@
 	import { get } from 'svelte/store';
 
 	import { gridStore, type Point, type Triangle } from './stores/gridStore';
-	import { uiStore } from './stores/uiStore';
-	import type { ElementRef, InteractionContext } from './stores/interactionTypes';
+	import { uiStore, type ElementRef } from './stores/uiStore';
 	import { COLORS } from './stores/interactionTypes';
 
-	let svgEl: SVGElement;
+	let svgEl: SVGSVGElement;
 	const size = 50;
 	let width = 800;
 	let height = 600;
@@ -21,7 +20,6 @@
 
 	let gridState: any;
 	let uiState: any;
-
 	let animationFrame: number | null = null;
 
 	function scheduleDraw() {
@@ -33,7 +31,7 @@
 	}
 
 	function drawGrid() {
-		if (!triangleLayer || !pointLayer || !gridState || !uiState) return;
+		if (!triangleLayer || !pointLayer || !labelLayer || !gridState || !uiState) return;
 
 		const xScale = (x: number) => x * zoomTransform.k;
 		const yScale = (y: number) => y * zoomTransform.k;
@@ -48,14 +46,16 @@
 			.append('polygon')
 			.attr('stroke-width', 1)
 			.style('cursor', 'pointer')
-			.on('mousedown', (_, d) =>
-				handleMouseDown({ id: d.points.sort().join('|'), type: 'triangle' })
-			)
+			.on('mousedown', (event: MouseEvent, d) => {
+				if (event.button === 0) {
+					uiStore.handleMouseDown({ id: d.points.sort().join('|'), type: 'triangle' });
+				}
+			})
 			.on('mouseenter', (_, d) =>
-				handleMouseEnter({ id: d.points.sort().join('|'), type: 'triangle' })
+				uiStore.handleMouseEnter({ id: d.points.sort().join('|'), type: 'triangle' })
 			)
 			.on('mouseleave', (_, d) =>
-				handleMouseLeave({ id: d.points.sort().join('|'), type: 'triangle' })
+				uiStore.handleMouseLeave({ id: d.points.sort().join('|'), type: 'triangle' })
 			);
 
 		triangles.exit().remove();
@@ -64,16 +64,15 @@
 			.merge(triangles as any)
 			.attr('points', (d) =>
 				d.points
-					.map((id) => {
-						const p = gridState.points.get(id);
+					.map((pid) => {
+						const p = gridState.points.get(pid);
 						return p ? `${xScale(p.x)},${yScale(p.y)}` : '';
 					})
 					.join(' ')
 			)
 			.attr('fill', (d) => {
 				const states = d.points.map((pid) => uiState.nodeStates[pid]?.interaction || 'ready');
-				const allActive = states.every((s) => s === 'active');
-				return allActive ? COLORS['active'] : COLORS['ready'];
+				return states.every((s) => s === 'active') ? COLORS.active : COLORS.ready;
 			})
 			.attr('stroke', 'black');
 
@@ -88,9 +87,13 @@
 			.attr('r', 15)
 			.attr('stroke', 'black')
 			.style('cursor', 'pointer')
-			.on('mousedown', (_, d) => handleMouseDown({ id: `${d.q},${d.r}`, type: 'point' }))
-			.on('mouseenter', (_, d) => handleMouseEnter({ id: `${d.q},${d.r}`, type: 'point' }))
-			.on('mouseleave', (_, d) => handleMouseLeave({ id: `${d.q},${d.r}`, type: 'point' }));
+			.on('mousedown', (event: MouseEvent, d) => {
+				if (event.button === 0) {
+					uiStore.handleMouseDown({ id: `${d.q},${d.r}`, type: 'point' });
+				}
+			})
+			.on('mouseenter', (_, d) => uiStore.handleMouseEnter({ id: `${d.q},${d.r}`, type: 'point' }))
+			.on('mouseleave', (_, d) => uiStore.handleMouseLeave({ id: `${d.q},${d.r}`, type: 'point' }));
 
 		points.exit().remove();
 
@@ -98,10 +101,7 @@
 			.merge(points as any)
 			.attr('cx', (d) => xScale(d.x))
 			.attr('cy', (d) => yScale(d.y))
-			.attr('fill', (d) => {
-				const id = `${d.q},${d.r}`;
-				return COLORS[uiState.nodeStates[id]?.interaction || 'ready'];
-			})
+			.attr('fill', (d) => COLORS[uiState.nodeStates[`${d.q},${d.r}`]?.interaction || 'ready'])
 			.attr('stroke', 'black');
 
 		// --- Labels ---
@@ -126,92 +126,6 @@
 			.text((d) => d.note);
 	}
 
-	// --- Interaction handlers ---
-	let context: InteractionContext = { shiftPressed: false, dragging: false };
-	function handleMouseDown(el: ElementRef) {
-		if (context.shiftPressed) {
-			// Shift+Click toggles points individually
-			if (el.type === 'point') {
-				const state = get(uiStore).nodeStates[el.id]?.interaction;
-				uiStore.setInteraction(el.id, state === 'active' ? 'inactive' : 'active');
-			} else if (el.type === 'triangle') {
-				const tri = gridState.triangles.find((t) => t.points.sort().join('|') === el.id);
-				if (tri) {
-					const allActive = tri.points.every(
-						(pid) => get(uiStore).nodeStates[pid]?.interaction === 'active'
-					);
-					const newState = allActive ? 'inactive' : 'active';
-					for (const pid of tri.points) {
-						uiStore.setInteraction(pid, newState);
-					}
-				}
-			}
-		} else {
-			// Click-and-drag without shift
-			if (el.type === 'point') {
-				uiStore.startDrag(el);
-				context.dragging = true;
-			}
-			if (el.type === 'triangle') {
-				const tri = gridState.triangles.find((t) => t.points.sort().join('|') === el.id);
-				if (tri) {
-					const pointRefs = tri.points.map((pid) => ({ id: pid, type: 'point' }));
-					uiStore.startDrag(pointRefs);
-					context.dragging = true;
-				}
-			}
-		}
-		scheduleDraw();
-	}
-
-	function handleMouseEnter(el: ElementRef) {
-		if (context.dragging) {
-			const dragTargets =
-				el.type === 'point'
-					? [el]
-					: gridState.triangles
-							.find((t) => t.points.sort().join('|') === el.id)
-							?.points.map((pid) => ({ id: pid, type: 'point' }));
-			if (dragTargets.length) {
-				uiStore.updateDrag(dragTargets);
-				scheduleDraw();
-			}
-		}
-	}
-
-	function handleMouseLeave(el: ElementRef) {
-		if (context.dragging) {
-			const dragTargets =
-				el.type === 'point'
-					? [el]
-					: gridState.triangles
-							.find((t) => t.points.sort().join('|') === el.id)
-							?.points.map((pid) => ({ id: pid, type: 'point' }));
-			if (dragTargets.length) {
-				uiStore.updateDrag(dragTargets);
-				scheduleDraw();
-			}
-		}
-	}
-
-	function handleMouseUp() {
-		if (context.dragging) {
-			uiStore.endDrag();
-			context.dragging = false;
-			scheduleDraw();
-		}
-	}
-
-	function handleKeyDown(e: KeyboardEvent) {
-		if (e.key === 'Shift') context.shiftPressed = true;
-		if (e.key === 'Escape') uiStore.clearInteractions();
-		scheduleDraw();
-	}
-
-	function handleKeyUp(e: KeyboardEvent) {
-		if (e.key === 'Shift') context.shiftPressed = false;
-	}
-
 	onMount(() => {
 		if (!browser) return;
 
@@ -230,13 +144,6 @@
 		gridState = get(gridStore);
 		uiState = get(uiStore);
 
-		gridState.points.forEach((p: Point) => {
-			const id = `${p.q},${p.r}`;
-			if (!uiState.nodeStates[id]) uiStore.setInteraction(id, 'ready');
-		});
-
-		scheduleDraw();
-
 		gridStore.subscribe((s) => {
 			gridState = s;
 			scheduleDraw();
@@ -254,15 +161,18 @@
 				zoomTransform = event.transform;
 				triangleLayer.attr('transform', zoomTransform.toString());
 				pointLayer.attr('transform', zoomTransform.toString());
+				labelLayer.attr('transform', zoomTransform.toString());
 				scheduleDraw();
 			});
 
 		svg.call(zoom);
 
+		// Disable context menu
 		svgEl.addEventListener('contextmenu', (e) => e.preventDefault());
-		svgEl.addEventListener('mouseup', handleMouseUp);
-		window.addEventListener('keydown', handleKeyDown);
-		window.addEventListener('keyup', handleKeyUp);
+
+		svgEl.addEventListener('mouseup', () => uiStore.handleMouseUp());
+		window.addEventListener('keydown', (e) => uiStore.handleKeyDown(e));
+		window.addEventListener('keyup', (e) => uiStore.handleKeyUp(e));
 		window.addEventListener('resize', () => {
 			width = window.innerWidth;
 			height = window.innerHeight;
@@ -274,9 +184,18 @@
 <svg bind:this={svgEl}></svg>
 
 <style>
+	html,
+	body,
+	:global(#svelte) {
+		width: 100%;
+		height: 100%;
+		margin: 0;
+	}
+
 	svg {
 		width: 100vw;
 		height: 100vh;
+		display: block;
 		background: #fafafa;
 	}
 
