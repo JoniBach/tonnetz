@@ -48,7 +48,7 @@ const initialState: InputState = {
 const DRAG_THRESHOLD = 5;
 
 function createInputStore() {
-	const { subscribe, update } = writable<InputState>(initialState);
+	const { subscribe, update, set } = writable<InputState>(initialState);
 	let listeners: { name: string; callback: EventListener }[] = [];
 
 	function checkDrag(s: InputState, x: number, y: number) {
@@ -61,12 +61,10 @@ function createInputStore() {
 	function computeActiveEvents(s: InputState): ActiveEvent[] {
 		const events: ActiveEvent[] = [];
 
-		// Modifiers
 		if (s.shiftPressed) events.push({ name: 'Shift' });
 		if (s.ctrlPressed) events.push({ name: 'Ctrl' });
 		if (s.altPressed) events.push({ name: 'Alt' });
 
-		// Mouse events
 		if (s.mouseDown) {
 			let btnName = '';
 			switch (s.mouseButton) {
@@ -86,7 +84,6 @@ function createInputStore() {
 			events.push({ name: 'Mouse Up', targetId: s.hoveredElementId });
 		}
 
-		// --- Drag related ---
 		if (s.dragStartElementId && !s.dragging) {
 			events.push({ name: 'Drag Start', targetId: s.dragStartElementId });
 		}
@@ -107,7 +104,6 @@ function createInputStore() {
 			}
 		}
 
-		// Hover
 		if (s.hoveredElementId) {
 			events.push({ name: 'Hover', targetId: s.hoveredElementId });
 		}
@@ -115,7 +111,10 @@ function createInputStore() {
 		return events;
 	}
 
-	// -------------------- Event Handlers -------------------- //
+	// Throttled mousemove handler
+	let lastMove = 0;
+	const THROTTLE_MS = 16; // ~60fps
+
 	function onMouseDown(x: number, y: number, hoveredId?: string, button: MouseButton = 'left') {
 		update((s) => {
 			const newState = {
@@ -138,7 +137,13 @@ function createInputStore() {
 	}
 
 	function onMouseMove(x: number, y: number, hoveredId?: string) {
+		const now = performance.now();
+		if (now - lastMove < THROTTLE_MS) return;
+		lastMove = now;
+
 		update((s) => {
+			if (x === s.mouseX && y === s.mouseY && hoveredId === s.hoveredElementId) return s;
+
 			let dragging = s.dragging;
 			if (s.mouseDown && !s.dragging) {
 				dragging = checkDrag(s, x, y);
@@ -197,10 +202,8 @@ function createInputStore() {
 		});
 	}
 
-	// -------------------- Listener Management -------------------- //
 	function addListeners(container: HTMLElement = document.body) {
 		removeListeners();
-
 		const register = (name: string, callback: EventListener) => {
 			container.addEventListener(name, callback, true);
 			listeners.push({ name, callback });
@@ -231,7 +234,7 @@ function createInputStore() {
 		subscribe,
 		addListeners,
 		removeListeners,
-		reset: () => update(() => ({ ...initialState }))
+		reset: () => set({ ...initialState })
 	};
 }
 

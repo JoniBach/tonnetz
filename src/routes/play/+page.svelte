@@ -15,15 +15,48 @@
 	let labelLayer: d3.Selection<SVGGElement, unknown, null, undefined>;
 
 	let lazyTimeout: any;
+	let animationFrame: number | null = null;
+	let lastDrawState: any = null;
+
+	// --- Efficient redraw: batch updates in rAF ---
+	function scheduleDraw(state: any) {
+		lastDrawState = state;
+		if (animationFrame) return;
+		animationFrame = requestAnimationFrame(() => {
+			drawGrid(lastDrawState);
+			animationFrame = null;
+		});
+	}
 
 	function drawGrid(state: any) {
+		if (!triangleLayer || !pointLayer || !labelLayer) return;
+
 		const xScale = (x: number) => x * zoomTransform.k;
 		const yScale = (y: number) => y * zoomTransform.k;
 
-		triangleLayer
+		// --- Triangles ---
+		const triangles = triangleLayer
 			.selectAll<SVGPolygonElement, Triangle>('polygon')
-			.data(state.triangles, (d) => d.points.sort().join('|'))
-			.join('polygon')
+			.data(state.triangles, (d) => d.points.sort().join('|'));
+
+		const enterTriangles = triangles
+			.enter()
+			.append('polygon')
+			.attr('stroke', 'black')
+			.attr('fill', 'white')
+			.style('cursor', 'pointer')
+			.on('mouseenter', function (_, d) {
+				d3.select(this).classed('hovered', true);
+				gridStore.highlightTriangle(d.points.sort().join('|'));
+			})
+			.on('mouseleave', function () {
+				d3.select(this).classed('hovered', false);
+			});
+
+		triangles.exit().remove();
+
+		enterTriangles
+			.merge(triangles as any)
 			.attr('points', (d) =>
 				d.points
 					.map((id) => {
@@ -34,31 +67,54 @@
 			)
 			.attr('fill', (d) =>
 				state.highlightedTriangles.has(d.points.sort().join('|')) ? 'orange' : 'white'
-			)
-			.attr('stroke', 'black')
-			.style('cursor', 'pointer')
-			.on('click', (_, d) => gridStore.highlightTriangle(d.points.sort().join('|')));
+			);
 
-		pointLayer
+		// --- Points ---
+		const points = pointLayer
 			.selectAll<SVGCircleElement, Point>('circle')
-			.data(Array.from(state.points.values()), (d) => `${d.q},${d.r}`)
-			.join('circle')
+			.data(Array.from(state.points.values()), (d) => `${d.q},${d.r}`);
+
+		const enterPoints = points
+			.enter()
+			.append('circle')
+			.attr('stroke', 'black')
+			.attr('r', 15)
+			.attr('fill', 'white')
+			.style('cursor', 'pointer')
+			.on('mouseenter', function (_, d) {
+				d3.select(this).classed('hovered', true);
+				gridStore.selectNote(d.note);
+			})
+			.on('mouseleave', function () {
+				d3.select(this).classed('hovered', false);
+			});
+
+		points.exit().remove();
+
+		enterPoints
+			.merge(points as any)
 			.attr('cx', (d) => xScale(d.x))
 			.attr('cy', (d) => yScale(d.y))
-			.attr('r', 15)
-			.attr('fill', (d) => (state.selectedNotes.has(d.note) ? 'orange' : 'white'))
-			.attr('stroke', 'black')
-			.style('cursor', 'pointer')
-			.on('click', (_, d) => gridStore.selectNote(d.note));
+			.attr('fill', (d) => (state.selectedNotes.has(d.note) ? 'orange' : 'white'));
 
-		labelLayer
+		// --- Labels ---
+		const labels = labelLayer
 			.selectAll<SVGTextElement, Point>('text')
-			.data(Array.from(state.points.values()), (d) => `${d.q},${d.r}`)
-			.join('text')
-			.attr('x', (d) => xScale(d.x))
-			.attr('y', (d) => yScale(d.y) + 5)
+			.data(Array.from(state.points.values()), (d) => `${d.q},${d.r}`);
+
+		const enterLabels = labels
+			.enter()
+			.append('text')
 			.attr('text-anchor', 'middle')
 			.attr('font-size', 12)
+			.attr('fill', '#333');
+
+		labels.exit().remove();
+
+		enterLabels
+			.merge(labels as any)
+			.attr('x', (d) => xScale(d.x))
+			.attr('y', (d) => yScale(d.y) + 5)
 			.text((d) => d.note);
 	}
 
@@ -73,9 +129,10 @@
 		pointLayer = svg.append('g').attr('class', 'point-layer');
 		labelLayer = svg.append('g').attr('class', 'label-layer');
 
-		gridStore.subscribe(drawGrid);
+		// 🔥 Optimized redraw subscription
+		gridStore.subscribe(scheduleDraw);
 
-		// Initial lazy-load
+		// Initial lazy load
 		gridStore.lazyLoadViewport(width, height, zoomTransform, size, 6);
 
 		const zoom = d3
@@ -105,4 +162,17 @@
 	});
 </script>
 
-<svg bind:this={svgEl} width="100vw" height="100vh"></svg>
+<svg bind:this={svgEl}></svg>
+
+<style>
+	svg {
+		width: 100vw;
+		height: 100vh;
+		background: #fafafa;
+	}
+
+	.hovered {
+		stroke-width: 2;
+		stroke: orange;
+	}
+</style>
