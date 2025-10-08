@@ -71,8 +71,9 @@
 					.join(' ')
 			)
 			.attr('fill', (d) => {
-				const id = d.points.sort().join('|');
-				return COLORS[uiState.nodeStates[id]?.interaction || 'ready'];
+				const states = d.points.map((pid) => uiState.nodeStates[pid]?.interaction || 'ready');
+				const allActive = states.every((s) => s === 'active');
+				return allActive ? COLORS['active'] : COLORS['ready'];
 			})
 			.attr('stroke', 'black');
 
@@ -113,6 +114,7 @@
 			.append('text')
 			.attr('text-anchor', 'middle')
 			.attr('font-size', 12)
+			.attr('pointer-events', 'none')
 			.attr('fill', '#333');
 
 		labels.exit().remove();
@@ -126,30 +128,70 @@
 
 	// --- Interaction handlers ---
 	let context: InteractionContext = { shiftPressed: false, dragging: false };
-
 	function handleMouseDown(el: ElementRef) {
 		if (context.shiftPressed) {
-			uiStore.setCurrent(el);
-			const currentState = get(uiStore).nodeStates[el.id]?.interaction;
-			if (currentState === 'active') {
-				uiStore.setInteraction(el.id, 'inactive');
-			} else {
-				uiStore.setInteraction(el.id, 'active');
+			// Shift+Click toggles points individually
+			if (el.type === 'point') {
+				const state = get(uiStore).nodeStates[el.id]?.interaction;
+				uiStore.setInteraction(el.id, state === 'active' ? 'inactive' : 'active');
+			} else if (el.type === 'triangle') {
+				const tri = gridState.triangles.find((t) => t.points.sort().join('|') === el.id);
+				if (tri) {
+					const allActive = tri.points.every(
+						(pid) => get(uiStore).nodeStates[pid]?.interaction === 'active'
+					);
+					const newState = allActive ? 'inactive' : 'active';
+					for (const pid of tri.points) {
+						uiStore.setInteraction(pid, newState);
+					}
+				}
 			}
 		} else {
-			uiStore.startDrag(el);
-			context.dragging = true;
+			// Click-and-drag without shift
+			if (el.type === 'point') {
+				uiStore.startDrag(el);
+				context.dragging = true;
+			}
+			if (el.type === 'triangle') {
+				const tri = gridState.triangles.find((t) => t.points.sort().join('|') === el.id);
+				if (tri) {
+					const pointRefs = tri.points.map((pid) => ({ id: pid, type: 'point' }));
+					uiStore.startDrag(pointRefs);
+					context.dragging = true;
+				}
+			}
 		}
 		scheduleDraw();
 	}
 
 	function handleMouseEnter(el: ElementRef) {
-		if (context.dragging) uiStore.updateDrag(el);
-		scheduleDraw();
+		if (context.dragging) {
+			const dragTargets =
+				el.type === 'point'
+					? [el]
+					: gridState.triangles
+							.find((t) => t.points.sort().join('|') === el.id)
+							?.points.map((pid) => ({ id: pid, type: 'point' }));
+			if (dragTargets.length) {
+				uiStore.updateDrag(dragTargets);
+				scheduleDraw();
+			}
+		}
 	}
 
 	function handleMouseLeave(el: ElementRef) {
-		scheduleDraw();
+		if (context.dragging) {
+			const dragTargets =
+				el.type === 'point'
+					? [el]
+					: gridState.triangles
+							.find((t) => t.points.sort().join('|') === el.id)
+							?.points.map((pid) => ({ id: pid, type: 'point' }));
+			if (dragTargets.length) {
+				uiStore.updateDrag(dragTargets);
+				scheduleDraw();
+			}
+		}
 	}
 
 	function handleMouseUp() {
@@ -170,49 +212,31 @@
 		if (e.key === 'Shift') context.shiftPressed = false;
 	}
 
-	// --- Mount ---
 	onMount(() => {
 		if (!browser) return;
 
-		// --- Set viewport size ---
 		width = window.innerWidth;
 		height = window.innerHeight;
 
-		// --- Select SVG and clear any existing content ---
 		const svg = d3.select(svgEl);
 		svg.selectAll('*').remove();
 
-		// --- Create layers ---
 		triangleLayer = svg.append('g').attr('class', 'triangle-layer');
 		pointLayer = svg.append('g').attr('class', 'point-layer');
-		labelLayer = svg.append('g').attr('class', 'label-layer'); // ← add this
+		labelLayer = svg.append('g').attr('class', 'label-layer');
 
-		// --- Generate grid for viewport ---
 		gridStore.lazyLoadViewport(width, height, zoomTransform, size, 6);
 
-		// --- Get initial states ---
 		gridState = get(gridStore);
 		uiState = get(uiStore);
 
-		// --- Initialize uiStore nodeStates for all points/triangles ---
-		gridState.triangles.forEach((t: Triangle) => {
-			t.points.forEach((id: string) => {
-				if (!uiState.nodeStates[id]) {
-					uiStore.setInteraction(id, 'ready');
-				}
-			});
-		});
 		gridState.points.forEach((p: Point) => {
 			const id = `${p.q},${p.r}`;
-			if (!uiState.nodeStates[id]) {
-				uiStore.setInteraction(id, 'ready');
-			}
+			if (!uiState.nodeStates[id]) uiStore.setInteraction(id, 'ready');
 		});
 
-		// --- Initial draw ---
 		scheduleDraw();
 
-		// --- Subscribe to store updates ---
 		gridStore.subscribe((s) => {
 			gridState = s;
 			scheduleDraw();
@@ -222,7 +246,6 @@
 			scheduleDraw();
 		});
 
-		// --- D3 zoom behavior ---
 		const zoom = d3
 			.zoom<SVGSVGElement, unknown>()
 			.scaleExtent([0.5, 4])
@@ -236,15 +259,10 @@
 
 		svg.call(zoom);
 
-		// --- Prevent context menu on right-click ---
 		svgEl.addEventListener('contextmenu', (e) => e.preventDefault());
-
-		// --- Mouse & keyboard interactions ---
 		svgEl.addEventListener('mouseup', handleMouseUp);
 		window.addEventListener('keydown', handleKeyDown);
 		window.addEventListener('keyup', handleKeyUp);
-
-		// --- Window resize ---
 		window.addEventListener('resize', () => {
 			width = window.innerWidth;
 			height = window.innerHeight;
