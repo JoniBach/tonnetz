@@ -13,9 +13,7 @@
 
 		for (const [id, point] of $gridStore.points.entries()) {
 			const nodeState = $uiStore.nodeStates[id];
-			if (nodeState?.interaction === 'active') {
-				newActiveNotes.add(point.note);
-			}
+			if (nodeState?.interaction === 'active') newActiveNotes.add(point.note);
 		}
 
 		activeNotes = newActiveNotes;

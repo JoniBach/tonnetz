@@ -9,6 +9,7 @@
 	import { COLORS } from './stores/interactionTypes';
 	import ActiveNotes from './components/ActiveNotes.svelte';
 	import ActiveAudio from './components/ActiveAudio.svelte';
+	import AudioConfigPanel from './components/AudioConfigPanel.svelte';
 
 	let svgEl: SVGSVGElement;
 	const size = 50;
@@ -185,6 +186,7 @@
 
 <ActiveNotes />
 <ActiveAudio />
+<AudioConfigPanel />
 
 <svg bind:this={svgEl}></svg>
 
