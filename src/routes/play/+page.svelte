@@ -1,11 +1,15 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { gridStore, type Point, type Triangle } from './stores/gridStore';
 	import * as d3 from 'd3';
+	import { browser } from '$app/environment';
+	import { get } from 'svelte/store';
+
+	import { gridStore, type Point, type Triangle } from './stores/gridStore';
+	import { uiStore } from './stores/uiStore';
+	import { inputStore } from './stores/inputStore';
 
 	let svgEl: SVGSVGElement;
 	const size = 50;
-
 	let width = 800;
 	let height = 600;
 	let zoomTransform = d3.zoomIdentity;
@@ -16,20 +20,25 @@
 
 	let lazyTimeout: any;
 	let animationFrame: number | null = null;
-	let lastDrawState: any = null;
 
-	// --- Efficient redraw: batch updates in rAF ---
-	function scheduleDraw(state: any) {
-		lastDrawState = state;
+	let gridState: any;
+	let uiState: any;
+
+	// --- Efficient redraw ---
+	function scheduleDraw() {
+		if (!browser) return;
+		if (!triangleLayer || !pointLayer || !labelLayer) return;
 		if (animationFrame) return;
+
 		animationFrame = requestAnimationFrame(() => {
-			drawGrid(lastDrawState);
+			drawGrid();
 			animationFrame = null;
 		});
 	}
 
-	function drawGrid(state: any) {
-		if (!triangleLayer || !pointLayer || !labelLayer) return;
+	// --- Draw ---
+	function drawGrid() {
+		if (!triangleLayer || !pointLayer || !labelLayer || !gridState || !uiState) return;
 
 		const xScale = (x: number) => x * zoomTransform.k;
 		const yScale = (y: number) => y * zoomTransform.k;
@@ -37,21 +46,16 @@
 		// --- Triangles ---
 		const triangles = triangleLayer
 			.selectAll<SVGPolygonElement, Triangle>('polygon')
-			.data(state.triangles, (d) => d.points.sort().join('|'));
+			.data(gridState.triangles, (d) => d.points.sort().join('|'));
 
 		const enterTriangles = triangles
 			.enter()
 			.append('polygon')
-			.attr('stroke', 'black')
-			.attr('fill', 'white')
+			.attr('stroke-width', 1)
 			.style('cursor', 'pointer')
-			.on('mouseenter', function (_, d) {
-				d3.select(this).classed('hovered', true);
-				gridStore.highlightTriangle(d.points.sort().join('|'));
-			})
-			.on('mouseleave', function () {
-				d3.select(this).classed('hovered', false);
-			});
+			.on('mouseenter', (_, d) => uiStore.highlightNode(d.points.sort().join('|')))
+			.on('mouseleave', (_, d) => uiStore.clearHighlight(d.points.sort().join('|')))
+			.on('click', (_, d) => uiStore.selectNode(d.points.sort().join('|'), true));
 
 		triangles.exit().remove();
 
@@ -60,34 +64,36 @@
 			.attr('points', (d) =>
 				d.points
 					.map((id) => {
-						const p = state.points.get(id);
+						const p = gridState.points.get(id);
 						return p ? `${xScale(p.x)},${yScale(p.y)}` : '';
 					})
 					.join(' ')
 			)
-			.attr('fill', (d) =>
-				state.highlightedTriangles.has(d.points.sort().join('|')) ? 'orange' : 'white'
+			.attr('fill', (d) => {
+				const id = d.points.sort().join('|');
+				if (uiState.nodeStates[id]?.selected) return 'orange';
+				if (uiState.nodeStates[id]?.highlighted) return '#ffeb99'; // light highlight
+				return 'white';
+			})
+
+			.attr('stroke', (d) =>
+				uiState.nodeStates[d.points.sort().join('|')]?.highlighted ? 'orange' : 'black'
 			);
 
 		// --- Points ---
 		const points = pointLayer
 			.selectAll<SVGCircleElement, Point>('circle')
-			.data(Array.from(state.points.values()), (d) => `${d.q},${d.r}`);
+			.data(Array.from(gridState.points.values()), (d) => `${d.q},${d.r}`);
 
 		const enterPoints = points
 			.enter()
 			.append('circle')
-			.attr('stroke', 'black')
 			.attr('r', 15)
-			.attr('fill', 'white')
+			.attr('stroke', 'black')
 			.style('cursor', 'pointer')
-			.on('mouseenter', function (_, d) {
-				d3.select(this).classed('hovered', true);
-				gridStore.selectNote(d.note);
-			})
-			.on('mouseleave', function () {
-				d3.select(this).classed('hovered', false);
-			});
+			.on('mouseenter', (_, d) => uiStore.highlightNode(`${d.q},${d.r}`))
+			.on('mouseleave', (_, d) => uiStore.clearHighlight(`${d.q},${d.r}`))
+			.on('click', (_, d) => uiStore.selectNode(`${d.q},${d.r}`, true));
 
 		points.exit().remove();
 
@@ -95,12 +101,20 @@
 			.merge(points as any)
 			.attr('cx', (d) => xScale(d.x))
 			.attr('cy', (d) => yScale(d.y))
-			.attr('fill', (d) => (state.selectedNotes.has(d.note) ? 'orange' : 'white'));
+			.attr('fill', (d) => {
+				const id = `${d.q},${d.r}`;
+				if (uiState.nodeStates[id]?.selected) return 'orange';
+				if (uiState.nodeStates[id]?.highlighted) return '#ffeb99';
+				return 'white';
+			})
+			.attr('stroke', (d) =>
+				uiState.nodeStates[`${d.q},${d.r}`]?.highlighted ? 'orange' : 'black'
+			);
 
 		// --- Labels ---
 		const labels = labelLayer
 			.selectAll<SVGTextElement, Point>('text')
-			.data(Array.from(state.points.values()), (d) => `${d.q},${d.r}`);
+			.data(Array.from(gridState.points.values()), (d) => `${d.q},${d.r}`);
 
 		const enterLabels = labels
 			.enter()
@@ -118,7 +132,10 @@
 			.text((d) => d.note);
 	}
 
+	// --- Mount & zoom ---
 	onMount(() => {
+		if (!browser) return;
+
 		width = window.innerWidth;
 		height = window.innerHeight;
 
@@ -129,19 +146,31 @@
 		pointLayer = svg.append('g').attr('class', 'point-layer');
 		labelLayer = svg.append('g').attr('class', 'label-layer');
 
-		// 🔥 Optimized redraw subscription
-		gridStore.subscribe(scheduleDraw);
+		// --- Initialize state immediately ---
+		gridState = get(gridStore);
+		uiState = get(uiStore);
+		scheduleDraw();
 
-		// Initial lazy load
+		// --- Subscriptions ---
+		gridStore.subscribe((s) => {
+			gridState = s;
+			scheduleDraw();
+		});
+		uiStore.subscribe((s) => {
+			uiState = s;
+			scheduleDraw();
+		});
+
+		// --- Lazy load viewport ---
 		gridStore.lazyLoadViewport(width, height, zoomTransform, size, 6);
 
+		// --- D3 zoom ---
 		const zoom = d3
 			.zoom<SVGSVGElement, unknown>()
 			.scaleExtent([0.5, 4])
 			.filter((event) => event.button === 2 || event.type === 'wheel')
 			.on('zoom', (event) => {
 				zoomTransform = event.transform;
-
 				triangleLayer.attr('transform', zoomTransform.toString());
 				pointLayer.attr('transform', zoomTransform.toString());
 				labelLayer.attr('transform', zoomTransform.toString());
@@ -158,6 +187,7 @@
 		window.addEventListener('resize', () => {
 			width = window.innerWidth;
 			height = window.innerHeight;
+			scheduleDraw();
 		});
 	});
 </script>
@@ -171,8 +201,10 @@
 		background: #fafafa;
 	}
 
-	.hovered {
-		stroke-width: 2;
-		stroke: orange;
+	circle,
+	polygon {
+		transition:
+			fill 0.1s,
+			stroke 0.1s;
 	}
 </style>
