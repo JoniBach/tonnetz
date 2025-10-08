@@ -8,6 +8,7 @@
 	import { uiStore, type ElementRef } from './stores/uiStore';
 	import { COLORS } from './stores/interactionTypes';
 	import ActiveNotes from './components/ActiveNotes.svelte';
+	import ActiveAudio from './components/ActiveAudio.svelte';
 
 	let svgEl: SVGSVGElement;
 	const size = 50;
@@ -183,6 +184,7 @@
 </script>
 
 <ActiveNotes />
+<ActiveAudio />
 
 <svg bind:this={svgEl}></svg>
 
