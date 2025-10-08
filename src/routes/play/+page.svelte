@@ -7,6 +7,7 @@
 	import { gridStore, type Point, type Triangle } from './stores/gridStore';
 	import { uiStore, type ElementRef } from './stores/uiStore';
 	import { COLORS } from './stores/interactionTypes';
+	import ActiveNotes from './components/ActiveNotes.svelte';
 
 	let svgEl: SVGSVGElement;
 	const size = 50;
@@ -180,6 +181,8 @@
 		});
 	});
 </script>
+
+<ActiveNotes />
 
 <svg bind:this={svgEl}></svg>
 
