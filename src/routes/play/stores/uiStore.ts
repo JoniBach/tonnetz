@@ -1,35 +1,30 @@
 import { writable } from 'svelte/store';
+import type { ElementState, ElementRef, InteractionContext } from './interactionTypes';
+import { COLORS } from './interactionTypes';
 
-// Per-node state
 export interface NodeState {
-	selected: boolean;
-	highlighted: boolean;
-	dragging: boolean;
+	interaction: ElementState;
+	selected?: boolean;
+	highlighted?: boolean;
+	dragging?: boolean;
 }
 
-// The main UI state
 export interface UIState {
-	highlightedNote: string | null; // Optional for music apps
-	hoveredNode: string | null; // Node currently hovered
-	selectedNodes: string[]; // Array of selected node IDs
-	draggedNodes: string[]; // Nodes currently being dragged
-	dragBox: { x1: number; y1: number; x2: number; y2: number } | null; // Rectangle drag selection
+	nodeStates: Record<string, NodeState>;
+	current?: ElementRef | null;
+	previous?: ElementRef | null;
+	shiftPressed: boolean;
 	dragging: boolean;
-	dragStart: { x: number; y: number } | null;
-	nodeStates: Record<string, NodeState>; // Node-specific state
-	tooltipNode: string | null; // Node showing a tooltip
-	contextMenuNode: string | null; // Node with context menu open
+	tooltipNode?: string | null;
+	contextMenuNode?: string | null;
 }
 
 const initialState: UIState = {
-	highlightedNote: null,
-	hoveredNode: null,
-	selectedNodes: [],
-	draggedNodes: [],
-	dragBox: null,
-	dragging: false,
-	dragStart: null,
 	nodeStates: {},
+	current: null,
+	previous: null,
+	shiftPressed: false,
+	dragging: false,
 	tooltipNode: null,
 	contextMenuNode: null
 };
@@ -41,88 +36,97 @@ export const uiStore = (() => {
 		subscribe,
 		reset: () => set(initialState),
 
-		// Node-level methods
-		highlightNode: (id: string) =>
+		// --- Element interaction ---
+		setCurrent: (el: ElementRef | null) =>
 			update((s) => {
-				s.hoveredNode = id;
-				s.nodeStates[id] = { ...(s.nodeStates[id] || {}), highlighted: true };
+				if (s.current && s.current.id !== el?.id) s.previous = s.current;
+				s.current = el;
 				return s;
 			}),
 
-		clearHighlight: (id?: string) =>
+		setPrevious: (el: ElementRef | null) =>
 			update((s) => {
-				if (id) {
-					if (s.nodeStates[id]) s.nodeStates[id].highlighted = false;
-					if (s.hoveredNode === id) s.hoveredNode = null;
-				} else {
-					Object.values(s.nodeStates).forEach((n) => (n.highlighted = false));
-					s.hoveredNode = null;
-				}
+				s.previous = el;
 				return s;
 			}),
 
-		selectNode: (id: string, multi = false) =>
+		setInteraction: (id: string, state: ElementState) =>
 			update((s) => {
-				if (!multi) s.selectedNodes = [];
-				if (!s.selectedNodes.includes(id)) s.selectedNodes.push(id);
-				s.nodeStates[id] = { ...(s.nodeStates[id] || {}), selected: true };
+				s.nodeStates[id] = { ...(s.nodeStates[id] || {}), interaction: state };
 				return s;
 			}),
 
-		deselectNode: (id: string) =>
+		clearInteractions: () =>
 			update((s) => {
-				s.selectedNodes = s.selectedNodes.filter((n) => n !== id);
-				if (s.nodeStates[id]) s.nodeStates[id].selected = false;
+				Object.keys(s.nodeStates).forEach((id) => {
+					s.nodeStates[id].interaction = 'ready';
+				});
+				s.current = null;
+				s.previous = null;
+				s.dragging = false;
 				return s;
 			}),
 
-		clearSelection: () =>
-			update((s) => {
-				s.selectedNodes = [];
-				Object.values(s.nodeStates).forEach((n) => (n.selected = false));
-				return s;
-			}),
-
-		// Dragging methods
-		startDrag: (ids: string[], start: { x: number; y: number }) =>
+		startDrag: (el: ElementRef) =>
 			update((s) => {
 				s.dragging = true;
-				s.dragStart = start;
-				s.draggedNodes = ids;
-				ids.forEach((id) => {
-					s.nodeStates[id] = { ...(s.nodeStates[id] || {}), dragging: true };
-				});
+				s.current = el;
+				s.previous = null;
+				s.nodeStates[el.id] = {
+					...(s.nodeStates[el.id] || {}),
+					interaction: 'active',
+					dragging: true
+				};
+				// Initialize a dragged set
+				s.draggedNodes = new Set([el.id]);
 				return s;
 			}),
 
-		updateDragBox: (x1: number, y1: number, x2: number, y2: number) =>
+		updateDrag: (el: ElementRef) =>
 			update((s) => {
-				s.dragBox = { x1, y1, x2, y2 };
+				if (!s.dragging) return s;
+
+				if (s.current && s.current.id !== el.id) {
+					// mark previous element as drag-prev
+					s.nodeStates[s.current.id] = {
+						...(s.nodeStates[s.current.id] || {}),
+						interaction: 'drag-prev',
+						dragging: false
+					};
+					s.draggedNodes?.add(s.current.id);
+				}
+
+				s.previous = s.current;
+				s.current = el;
+				s.nodeStates[el.id] = {
+					...(s.nodeStates[el.id] || {}),
+					interaction: 'active',
+					dragging: true
+				};
+				s.draggedNodes?.add(el.id);
 				return s;
 			}),
 
 		endDrag: () =>
 			update((s) => {
-				s.dragging = false;
-				s.dragStart = null;
-				s.draggedNodes.forEach((id) => {
-					if (s.nodeStates[id]) s.nodeStates[id].dragging = false;
+				// mark all dragged nodes as inactive
+				s.draggedNodes?.forEach((id) => {
+					s.nodeStates[id] = {
+						...(s.nodeStates[id] || {}),
+						interaction: 'inactive',
+						dragging: false
+					};
 				});
-				s.draggedNodes = [];
-				s.dragBox = null;
+				s.current = null;
+				s.previous = null;
+				s.dragging = false;
+				s.draggedNodes = new Set();
 				return s;
 			}),
 
-		// Tooltip and context menu
-		setTooltipNode: (id: string | null) =>
+		setShift: (pressed: boolean) =>
 			update((s) => {
-				s.tooltipNode = id;
-				return s;
-			}),
-
-		setContextMenuNode: (id: string | null) =>
-			update((s) => {
-				s.contextMenuNode = id;
+				s.shiftPressed = pressed;
 				return s;
 			})
 	};
