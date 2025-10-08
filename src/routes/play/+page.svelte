@@ -184,8 +184,6 @@
 <svg bind:this={svgEl}></svg>
 
 <style>
-	html,
-	body,
 	:global(#svelte) {
 		width: 100%;
 		height: 100%;
@@ -197,12 +195,5 @@
 		height: 100vh;
 		display: block;
 		background: #fafafa;
-	}
-
-	circle,
-	polygon {
-		transition:
-			fill 0.1s,
-			stroke 0.1s;
 	}
 </style>
