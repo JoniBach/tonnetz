@@ -10,6 +10,7 @@
 	import ActiveNotes from './components/ActiveNotes.svelte';
 	import ActiveAudio from './components/ActiveAudio.svelte';
 	import AudioConfigPanel from './components/AudioConfigPanel.svelte';
+	import PresetConfigPanel from './components/PresetConfigPanel.svelte';
 
 	let svgEl: SVGSVGElement;
 	const size = 50;
@@ -179,19 +180,13 @@
 			height = window.innerHeight;
 			scheduleDraw();
 		});
-
-		//---------------------------------------------------
-		// 👇 Example: Add hints after 1 second
-		//---------------------------------------------------
-		const hintArray = ['0,0', '0,1', '1,0']; // coordinates to highlight
-		uiStore.setHints(hintArray);
-		console.log('Hints set:', hintArray);
 	});
 </script>
 
 <ActiveNotes />
 <ActiveAudio />
 <AudioConfigPanel />
+<PresetConfigPanel />
 
 <svg bind:this={svgEl}></svg>
 
