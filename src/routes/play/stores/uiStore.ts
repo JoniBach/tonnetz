@@ -6,8 +6,9 @@ export type ElementState = 'ready' | 'active' | 'inactive' | 'drag-prev';
 export type InteractionContext = { shiftPressed: boolean; dragging: boolean };
 
 export interface NodeState {
-	interaction: ElementState;
-	dragging?: boolean;
+	interaction: ElementState; // ready | active | hint | etc.
+	dragging?: boolean; // whether it's currently being dragged
+	previousInteraction?: ElementState; // what it was before activation
 }
 
 interface UIStoreState {
@@ -53,7 +54,22 @@ export const uiStore = (() => {
 
 	function setInteraction(id: string, state: ElementState) {
 		update((s) => {
-			s.nodeStates[id] = { ...(s.nodeStates[id] || {}), interaction: state };
+			for (const id of ids) {
+				if (!s.nodeStates[id]) s.nodeStates[id] = { interaction: 'ready' };
+				const node = s.nodeStates[id];
+
+				if (newState === 'active') {
+					// Remember what it was before activating
+					node.previousInteraction = node.interaction;
+					node.interaction = 'active';
+				} else if (newState === 'ready') {
+					// Restore to hint if it used to be a hint
+					node.interaction = node.previousInteraction === 'hint' ? 'hint' : 'ready';
+					node.previousInteraction = undefined;
+				} else {
+					node.interaction = newState;
+				}
+			}
 			return s;
 		});
 	}
@@ -122,14 +138,15 @@ export const uiStore = (() => {
 				const elements = Array.isArray(els) ? els : [els];
 				s.context.dragging = true;
 				s.draggedNodes = new Set(elements.map((el) => el.id));
-				elements.forEach(
-					(el) =>
-						(s.nodeStates[el.id] = {
-							...(s.nodeStates[el.id] || {}),
-							interaction: 'active',
-							dragging: true
-						})
-				);
+				elements.forEach((el) => {
+					const prev = s.nodeStates[el.id]?.interaction;
+					s.nodeStates[el.id] = {
+						...(s.nodeStates[el.id] || {}),
+						previousInteraction: prev, // 👈 remember old state
+						interaction: 'active',
+						dragging: true
+					};
+				});
 				return s;
 			});
 		},
@@ -137,19 +154,37 @@ export const uiStore = (() => {
 		updateDrag(els: ElementRef | ElementRef[]) {
 			update((s) => {
 				if (!s.context.dragging) return s;
+
 				const elements = Array.isArray(els) ? els : [els];
 				const newIds = new Set(elements.map((el) => el.id));
+
+				// 🔸 Handle nodes that were in the previous drag set but not in the new one
 				s.draggedNodes?.forEach((id) => {
-					if (!newIds.has(id)) s.nodeStates[id].interaction = 'drag-prev';
+					const node = s.nodeStates[id];
+					if (!node) return;
+
+					if (!newIds.has(id)) {
+						// If it was a hint before activation → restore it to hint
+						if (node.previousInteraction === 'hint') {
+							node.interaction = 'hint';
+						} else {
+							// Otherwise show drag-prev (orange trail)
+							node.interaction = 'drag-prev';
+						}
+						node.previousInteraction = undefined;
+						node.dragging = false;
+					}
 				});
-				elements.forEach(
-					(el) =>
-						(s.nodeStates[el.id] = {
-							...(s.nodeStates[el.id] || {}),
-							interaction: 'active',
-							dragging: true
-						})
-				);
+
+				// 🔸 Activate newly hovered nodes
+				elements.forEach((el) => {
+					const node = s.nodeStates[el.id] || { interaction: 'ready' };
+					node.previousInteraction = node.previousInteraction ?? node.interaction;
+					node.interaction = 'active';
+					node.dragging = true;
+					s.nodeStates[el.id] = node;
+				});
+
 				s.draggedNodes = newIds;
 				return s;
 			});
@@ -157,13 +192,50 @@ export const uiStore = (() => {
 
 		endDrag() {
 			update((s) => {
-				s.draggedNodes?.forEach((id) => (s.nodeStates[id].interaction = 'inactive'));
-				Object.keys(s.nodeStates).forEach((id) => {
-					if (s.nodeStates[id].interaction === 'drag-prev')
-						s.nodeStates[id].interaction = 'inactive';
+				s.draggedNodes?.forEach((id) => {
+					const node = s.nodeStates[id];
+					if (!node) return;
+
+					if (node.previousInteraction === 'hint') {
+						node.interaction = 'hint';
+					} else {
+						node.interaction = 'inactive';
+					}
+
+					node.previousInteraction = undefined;
+					node.dragging = false;
 				});
+
+				// clean up old 'drag-prev' states
+				Object.keys(s.nodeStates).forEach((id) => {
+					const node = s.nodeStates[id];
+					if (node.interaction === 'drag-prev') {
+						node.interaction = node.previousInteraction === 'hint' ? 'hint' : 'inactive';
+						node.previousInteraction = undefined;
+					}
+				});
+
 				s.context.dragging = false;
 				s.draggedNodes = new Set();
+				return s;
+			});
+		},
+		setHints(hintIds: string[]) {
+			update((s) => {
+				// Reset all previous hint states back to ready
+				for (const [id, node] of Object.entries(s.nodeStates)) {
+					if (node.interaction === 'hint') {
+						node.interaction = node.previousInteraction === 'hint' ? 'hint' : 'ready';
+						node.previousInteraction = undefined;
+					}
+				}
+
+				// Apply new hints
+				for (const id of hintIds) {
+					if (!s.nodeStates[id]) s.nodeStates[id] = { interaction: 'ready' };
+					s.nodeStates[id].interaction = 'hint';
+				}
+
 				return s;
 			});
 		}

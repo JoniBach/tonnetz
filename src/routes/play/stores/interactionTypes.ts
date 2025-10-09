@@ -1,10 +1,11 @@
-export type ElementState = 'ready' | 'active' | 'inactive' | 'drag-prev';
+export type ElementState = 'ready' | 'active' | 'inactive' | 'drag-prev' | 'hint';
 
 export const COLORS: Record<ElementState, string> = {
 	ready: '#eee',
 	active: '#4caf50',
-	inactive: '#999',
-	'drag-prev': '#ff9800'
+	inactive: '#ccc',
+	'drag-prev': '#ff9800',
+	hint: '#4FC3F7' // light blue
 };
 
 export interface ElementRef {

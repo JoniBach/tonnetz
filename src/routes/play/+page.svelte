@@ -170,9 +170,7 @@
 
 		svg.call(zoom);
 
-		// Disable context menu
 		svgEl.addEventListener('contextmenu', (e) => e.preventDefault());
-
 		svgEl.addEventListener('mouseup', () => uiStore.handleMouseUp());
 		window.addEventListener('keydown', (e) => uiStore.handleKeyDown(e));
 		window.addEventListener('keyup', (e) => uiStore.handleKeyUp(e));
@@ -181,6 +179,13 @@
 			height = window.innerHeight;
 			scheduleDraw();
 		});
+
+		//---------------------------------------------------
+		// 👇 Example: Add hints after 1 second
+		//---------------------------------------------------
+		const hintArray = ['0,0', '0,1', '1,0']; // coordinates to highlight
+		uiStore.setHints(hintArray);
+		console.log('Hints set:', hintArray);
 	});
 </script>
 
