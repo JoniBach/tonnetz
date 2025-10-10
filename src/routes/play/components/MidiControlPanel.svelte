@@ -3,22 +3,16 @@
 	import { browser } from '$app/environment';
 	import * as Tone from 'tone';
 
-	// ========================
-	// 🎵 MidiPlayer class
-	// ========================
 	class MidiPlayer {
 		synth: Tone.PolySynth | null = null;
 		midiData: any = null;
 		isPlaying = false;
 		activeNotes = new Set<string>();
 		onUpdate?: (notes: Set<string>) => void;
-		volume: number;
 
-		constructor(volume = -10) {
-			this.volume = volume;
+		constructor() {
 			if (browser) {
 				this.synth = new Tone.PolySynth(Tone.Synth).toDestination();
-				this.synth.volume.value = volume;
 			}
 		}
 
@@ -55,11 +49,6 @@
 			this.update();
 		}
 
-		setVolume(value: number) {
-			if (this.synth) this.synth.volume.value = value;
-			this.volume = value;
-		}
-
 		private add(note: string) {
 			this.activeNotes.add(note);
 			this.update();
@@ -80,24 +69,20 @@
 		}
 	}
 
-	// ========================
-	// 🧠 Panel UI state
-	// ========================
 	let open = false;
 	let player: MidiPlayer | null = null;
 	let midiFile: File | null = null;
 	let isPlaying = false;
 	let activeNotes: Set<string> = new Set();
 	let activeNotesJSON = '[]';
-	let volume = -10;
 	let error: string | null = null;
 
 	onMount(() => {
 		if (!browser) return;
-		player = new MidiPlayer(volume);
+		player = new MidiPlayer();
 		player.onUpdate = (notes) => {
 			activeNotes = notes;
-			activeNotesJSON = JSON.stringify(Array.from(notes), null, 2);
+			activeNotesJSON = JSON.stringify(Array.from(notes));
 		};
 	});
 
@@ -129,18 +114,8 @@
 		else await player.play();
 		isPlaying = !isPlaying;
 	}
-
-	function handleVolumeChange(e: Event) {
-		if (!player) return;
-		const value = parseFloat((e.target as HTMLInputElement).value);
-		volume = value;
-		player.setVolume(value);
-	}
 </script>
 
-<!-- ========================
-     Panel UI
-======================== -->
 <div class="panel-wrapper">
 	{#if !midiFile}
 		<button class="upload-button" on:click={uploadFile}> Upload MIDI File </button>
@@ -160,31 +135,16 @@
 						{isPlaying ? '⏹️ Stop' : '▶️ Play'}
 					</button>
 					<button on:click={uploadFile}>Change File</button>
-
-					<div class="volume-control">
-						<span>🔊</span>
-						<input
-							type="range"
-							min="-60"
-							max="0"
-							step="1"
-							bind:value={volume}
-							on:input={handleVolumeChange}
-						/>
-						<span>{Math.round(volume)}dB</span>
-					</div>
 				</div>
 
 				{#if error}
 					<div class="error">{error}</div>
 				{/if}
 
-				{#if activeNotes.size > 0}
-					<div class="active-notes">
-						<h3>Active Notes (JSON)</h3>
-						<pre>{activeNotesJSON}</pre>
-					</div>
-				{/if}
+				<div>
+					<h3>Active Notes</h3>
+					<pre>{activeNotes.size > 0 ? activeNotesJSON : ''}</pre>
+				</div>
 			</div>
 		{/if}
 	{/if}
@@ -245,22 +205,6 @@
 
 	.controls button:last-child {
 		background: #e74c3c;
-	}
-
-	.volume-control {
-		display: flex;
-		align-items: center;
-		gap: 0.3rem;
-	}
-
-	.active-notes {
-		background: #f5f5f5;
-		border: 1px solid #ddd;
-		padding: 0.5rem;
-		border-radius: 4px;
-		font-size: 0.75rem;
-		max-height: 100px;
-		overflow-y: auto;
 	}
 
 	.error {

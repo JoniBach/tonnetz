@@ -11,6 +11,7 @@
 	import ActiveAudio from './components/ActiveAudio.svelte';
 	import AudioConfigPanel from './components/AudioConfigPanel.svelte';
 	import PresetConfigPanel from './components/PresetConfigPanel.svelte';
+	import MidiControlPanel from './components/MidiControlPanel.svelte';
 
 	let svgEl: SVGSVGElement;
 	const size = 50;
@@ -109,6 +110,7 @@
 			.attr('stroke', 'black');
 
 		// --- Labels ---
+		// --- Labels ---
 		const labels = labelLayer
 			.selectAll<SVGTextElement, Point>('text')
 			.data(Array.from(gridState.points.values()), (d) => `${d.q},${d.r}`);
@@ -117,7 +119,8 @@
 			.enter()
 			.append('text')
 			.attr('text-anchor', 'middle')
-			.attr('font-size', 12)
+			.attr('alignment-baseline', 'middle')
+			.attr('font-size', 14)
 			.attr('pointer-events', 'none')
 			.attr('fill', '#333');
 
@@ -125,8 +128,8 @@
 
 		enterLabels
 			.merge(labels as any)
-			.attr('x', (d) => xScale(d.x))
-			.attr('y', (d) => yScale(d.y) + 5)
+			.attr('x', (d) => d.x * zoomTransform.k)
+			.attr('y', (d) => d.y * zoomTransform.k)
 			.text((d) => d.note);
 	}
 
@@ -187,6 +190,7 @@
 <ActiveAudio />
 <AudioConfigPanel />
 <PresetConfigPanel />
+<MidiControlPanel />
 
 <svg bind:this={svgEl}></svg>
 

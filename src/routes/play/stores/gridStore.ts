@@ -5,15 +5,18 @@ export type Triangle = { points: [string, string, string]; up: boolean };
 
 const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
+// Convert axial coordinates to cartesian
 function axialToCartesian(q: number, r: number, size: number) {
 	const x = size * Math.sqrt(3) * (q + r / 2);
 	const y = size * 1.5 * r;
 	return { x, y };
 }
 
-function getNote(q: number, r: number) {
+// Map (q,r) to note with octave number
+function getNoteWithOctave(q: number, r: number) {
 	const semitone = (q * 7 + r * 4 + 120) % 12;
-	return NOTES[semitone];
+	const octave = 4 + Math.floor((q * 7 + r * 4) / 12);
+	return `${NOTES[semitone]}${octave}`;
 }
 
 function createGridStore() {
@@ -62,7 +65,7 @@ function createGridStore() {
 					const id = `${q},${r}`;
 					if (!pointsMap.has(id)) {
 						const { x, y } = axialToCartesian(q, r, size);
-						pointsMap.set(id, { q, r, x, y, note: getNote(q, r) });
+						pointsMap.set(id, { q, r, x, y, note: getNoteWithOctave(q, r) });
 					}
 				}
 			}
@@ -72,6 +75,7 @@ function createGridStore() {
 				for (let q = qStart; q <= qEnd; q++) {
 					const id = `${q},${r}`;
 
+					// Upward triangle
 					const up1 = `${q},${r + 1}`;
 					const up2 = `${q + 1},${r}`;
 					const upId = [id, up1, up2].sort().join('|');
@@ -80,6 +84,7 @@ function createGridStore() {
 						triangleIds.add(upId);
 					}
 
+					// Downward triangle
 					const down1 = `${q},${r - 1}`;
 					const down2 = `${q - 1},${r}`;
 					const downId = [id, down1, down2].sort().join('|');
