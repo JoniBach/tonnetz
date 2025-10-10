@@ -12,6 +12,29 @@ function axialToCartesian(q: number, r: number, size: number) {
 	return { x, y };
 }
 
+export function getCoordinatesFromNote(note: string): string {
+	const match = note.match(/^([A-G]#?)(\d+)$/);
+	if (!match) throw new Error(`Invalid note format: ${note}`);
+
+	const [, noteName, octaveStr] = match;
+	const semitone = NOTES.indexOf(noteName);
+	const octave = parseInt(octaveStr, 10);
+
+	if (semitone === -1) throw new Error(`Invalid note name: ${noteName}`);
+
+	// Total semitones from C4
+	const n = (octave - 4) * 12 + semitone;
+
+	// Solve: n = q*7 + r*4
+	// We need to find q and r such that this holds
+	// Using modular arithmetic: r ≡ 2n (mod 7) works
+	let r = (2 * n) % 7;
+	if (r < 0) r += 7;
+
+	const q = (n - r * 4) / 7;
+
+	return `${q},${r}`;
+}
 // Map (q,r) to note with octave number
 function getNoteWithOctave(q: number, r: number) {
 	const semitone = (q * 7 + r * 4 + 120) % 12;

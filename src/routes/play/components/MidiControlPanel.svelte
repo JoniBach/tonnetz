@@ -2,19 +2,15 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { browser } from '$app/environment';
 	import * as Tone from 'tone';
+	import { getCoordinatesFromNote } from '../stores/gridStore';
+	import { uiStore } from '../stores/uiStore';
 
 	class MidiPlayer {
-		synth: Tone.PolySynth | null = null;
 		midiData: any = null;
 		isPlaying = false;
 		activeNotes = new Set<string>();
+		scheduledEvents: number[] = [];
 		onUpdate?: (notes: Set<string>) => void;
-
-		constructor() {
-			if (browser) {
-				this.synth = new Tone.PolySynth(Tone.Synth).toDestination();
-			}
-		}
 
 		async load(file: File) {
 			const buffer = await file.arrayBuffer();
@@ -25,25 +21,53 @@
 		}
 
 		async play() {
-			if (!this.midiData || !this.synth) return;
+			if (!this.midiData) return;
+
 			await Tone.start();
+			this.stop(); // Clear any existing playback
 			this.isPlaying = true;
 			this.activeNotes.clear();
 			this.update();
 
-			const now = Tone.now();
+			const now = Tone.now() + 0.1; // Small offset for scheduling stability
+
 			for (const track of this.midiData.tracks) {
 				for (const note of track.notes) {
-					this.synth.triggerAttack(note.name, now + note.time, note.velocity);
-					setTimeout(() => this.add(note.name), note.time * 1000);
-					this.synth.triggerRelease(note.name, now + note.time + note.duration);
-					setTimeout(() => this.remove(note.name), (note.time + note.duration) * 1000);
+					const startTime = now + note.time;
+					const endTime = startTime + note.duration;
+
+					// Schedule note on
+					const startId = Tone.Transport.scheduleOnce(() => {
+						if (this.isPlaying) {
+							this.add(note.name);
+						}
+					}, startTime);
+
+					// Schedule note off
+					const endId = Tone.Transport.scheduleOnce(() => {
+						if (this.isPlaying) {
+							this.remove(note.name);
+						}
+					}, endTime);
+
+					this.scheduledEvents.push(startId as unknown as number, endId as unknown as number);
 				}
 			}
+
+			Tone.Transport.start(now);
 		}
 
 		stop() {
-			if (this.synth) this.synth.releaseAll();
+			// Clear all scheduled events
+			for (const eventId of this.scheduledEvents) {
+				Tone.Transport.clear(eventId);
+			}
+			this.scheduledEvents = [];
+
+			// Stop transport
+			Tone.Transport.stop();
+			Tone.Transport.cancel();
+
 			this.activeNotes.clear();
 			this.isPlaying = false;
 			this.update();
@@ -60,12 +84,13 @@
 		}
 
 		private update() {
-			this.onUpdate?.(new Set(this.activeNotes));
+			if (this.onUpdate) {
+				this.onUpdate(new Set(this.activeNotes));
+			}
 		}
 
 		dispose() {
-			if (this.synth) this.synth.dispose();
-			this.synth = null;
+			this.stop();
 		}
 	}
 
@@ -81,13 +106,21 @@
 		if (!browser) return;
 		player = new MidiPlayer();
 		player.onUpdate = (notes) => {
-			activeNotes = notes;
-			activeNotesJSON = JSON.stringify(Array.from(notes));
+			try {
+				const coords = Array.from(notes).map((note) => getCoordinatesFromNote(note));
+				uiStore.playNotes(coords);
+				activeNotes = notes;
+				activeNotesJSON = JSON.stringify(Array.from(notes));
+			} catch (e) {
+				console.error('Error updating notes:', e);
+			}
 		};
 	});
 
 	onDestroy(() => {
-		if (browser && player) player.dispose();
+		if (browser && player) {
+			player.dispose();
+		}
 	});
 
 	function uploadFile() {
@@ -100,8 +133,9 @@
 					midiFile = input.files[0];
 					await player.load(midiFile);
 					error = null;
-				} catch {
+				} catch (e) {
 					error = 'Failed to load MIDI file';
+					console.error(e);
 				}
 			}
 		};
@@ -110,9 +144,13 @@
 
 	async function togglePlay() {
 		if (!player || !midiFile) return;
-		if (isPlaying) player.stop();
-		else await player.play();
-		isPlaying = !isPlaying;
+		if (isPlaying) {
+			player.stop();
+			isPlaying = false;
+		} else {
+			await player.play();
+			isPlaying = true;
+		}
 	}
 </script>
 
@@ -140,11 +178,6 @@
 				{#if error}
 					<div class="error">{error}</div>
 				{/if}
-
-				<div>
-					<h3>Active Notes</h3>
-					<pre>{activeNotes.size > 0 ? activeNotesJSON : '[ ]'}</pre>
-				</div>
 			</div>
 		{/if}
 	{/if}
@@ -179,7 +212,7 @@
 		border: 1px solid #ccc;
 		padding: 1rem;
 		border-radius: 6px;
-		width: 260px;
+		width: 100px;
 		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 		display: flex;
 		flex-direction: column;

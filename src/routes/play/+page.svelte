@@ -4,7 +4,7 @@
 	import { browser } from '$app/environment';
 	import { get } from 'svelte/store';
 
-	import { gridStore, type Point, type Triangle } from './stores/gridStore';
+	import { getCoordinatesFromNote, gridStore, type Point, type Triangle } from './stores/gridStore';
 	import { uiStore, type ElementRef } from './stores/uiStore';
 	import { COLORS } from './stores/interactionTypes';
 	import ActiveNotes from './components/ActiveNotes.svelte';
@@ -183,6 +183,18 @@
 			height = window.innerHeight;
 			scheduleDraw();
 		});
+
+		console.log([getCoordinatesFromNote('D5'), getCoordinatesFromNote('A5')]);
+
+		// uiStore.playNotes([
+		// 	getCoordinatesFromNote('A4'),
+		// 	getCoordinatesFromNote('B4'),
+		// 	getCoordinatesFromNote('C5'),
+		// 	getCoordinatesFromNote('D5'),
+		// 	getCoordinatesFromNote('E5'),
+		// 	getCoordinatesFromNote('F5'),
+		// 	getCoordinatesFromNote('G5')
+		// ]);
 	});
 </script>
 

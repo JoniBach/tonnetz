@@ -27,10 +27,9 @@ const initialState: UIStoreState = {
 	draggedNodes: new Set()
 };
 
-// --- Helper to centralize state transitions ---
+// --- State transition helper ---
 function transition(node: NodeState, target: ElementState): NodeState {
 	const result = { ...node };
-
 	switch (target) {
 		case 'active':
 			result.previousInteraction ??= result.interaction;
@@ -38,12 +37,8 @@ function transition(node: NodeState, target: ElementState): NodeState {
 			result.dragging = true;
 			break;
 		case 'ready':
-			result.interaction = result.previousInteraction === 'hint' ? 'hint' : 'ready';
-			result.previousInteraction = undefined;
-			result.dragging = false;
-			break;
 		case 'inactive':
-			result.interaction = result.previousInteraction === 'hint' ? 'hint' : 'inactive';
+			result.interaction = result.previousInteraction === 'hint' ? 'hint' : target;
 			result.previousInteraction = undefined;
 			result.dragging = false;
 			break;
@@ -57,24 +52,23 @@ function transition(node: NodeState, target: ElementState): NodeState {
 			result.dragging = false;
 			break;
 	}
-
 	return result;
 }
 
-// --- The UI store ---
+// --- UI Store ---
 export const uiStore = (() => {
 	const { subscribe, update, set } = writable<UIStoreState>(initialState);
 
-	// --- Helper functions ---
-	function setInteraction(id: string, state: ElementState) {
+	// --- Node helpers ---
+	const updateNode = (id: string, target: ElementState) => {
 		update((s) => {
-			if (!s.nodeStates[id]) s.nodeStates[id] = { interaction: 'ready' };
-			s.nodeStates[id] = transition(s.nodeStates[id], state);
+			const node = s.nodeStates[id] || { interaction: 'ready' };
+			s.nodeStates[id] = transition(node, target);
 			return s;
 		});
-	}
+	};
 
-	function togglePoint(id: string) {
+	const toggleElement = (id: string) => {
 		update((s) => {
 			const state = s.nodeStates[id]?.interaction || 'ready';
 			s.nodeStates[id] = transition(
@@ -83,24 +77,53 @@ export const uiStore = (() => {
 			);
 			return s;
 		});
-	}
+	};
 
-	function toggleTriangle(id: string) {
+	const togglePoint = (id: string) => {
+		update((s) => {
+			const node = s.nodeStates[id] || { interaction: 'ready' };
+			const newState: ElementState = node.interaction === 'active' ? 'inactive' : 'active';
+			s.nodeStates[id] = transition({ ...node, previousInteraction: node.interaction }, newState);
+			return s;
+		});
+	};
+
+	const toggleTriangle = (id: string) => {
 		const tri = gridStore.getTriangleById(id);
 		if (!tri) return;
+
 		const states = tri.points.map((pid) => get(uiStore).nodeStates[pid]?.interaction || 'ready');
 		const allActive = states.every((s) => s === 'active');
 		const newState: ElementState = allActive ? 'inactive' : 'active';
-		for (const pid of tri.points) setInteraction(pid, newState);
-	}
 
-	// --- Drag/hover logic ---
-	function startDrag(els: ElementRef | ElementRef[]) {
+		tri.points.forEach((pid) => {
+			update((s) => {
+				const node = s.nodeStates[pid] || { interaction: 'ready' };
+				s.nodeStates[pid] = transition(
+					{ ...node, previousInteraction: node.interaction },
+					newState
+				);
+				return s;
+			});
+		});
+	};
+
+	// --- Drag helpers ---
+	const expandToPoints = (els: ElementRef | ElementRef[]) => {
+		const elements = Array.isArray(els) ? els : [els];
+		return elements.flatMap((el) =>
+			el.type === 'point'
+				? [el]
+				: (gridStore.getTriangleById(el.id)?.points.map((id) => ({ id, type: 'point' })) ?? [])
+		);
+	};
+
+	const startDrag = (els: ElementRef | ElementRef[]) => {
+		const allPoints = expandToPoints(els);
 		update((s) => {
-			const elements = Array.isArray(els) ? els : [els];
 			s.context.dragging = true;
-			s.draggedNodes = new Set(elements.map((el) => el.id));
-			elements.forEach((el) => {
+			s.draggedNodes = new Set(allPoints.map((el) => el.id));
+			allPoints.forEach((el) => {
 				const prev = s.nodeStates[el.id]?.interaction;
 				s.nodeStates[el.id] = transition(
 					{
@@ -112,42 +135,49 @@ export const uiStore = (() => {
 			});
 			return s;
 		});
-	}
+	};
 
-	function updateDrag(els: ElementRef | ElementRef[]) {
+	const updateDrag = (els: ElementRef | ElementRef[]) => {
+		const allPoints = expandToPoints(els);
+		const newIds = new Set(allPoints.map((el) => el.id));
 		update((s) => {
 			if (!s.context.dragging) return s;
 
-			const elements = Array.isArray(els) ? els : [els];
-			const newIds = new Set(elements.map((el) => el.id));
-
-			// Restore previous drag nodes
+			// Reset old drag nodes
 			s.draggedNodes?.forEach((id) => {
-				const node = s.nodeStates[id];
-				if (!node || newIds.has(id)) return;
-				s.nodeStates[id] = transition(node, 'drag-prev');
+				if (!newIds.has(id) && s.nodeStates[id]) {
+					s.nodeStates[id] = transition(s.nodeStates[id], 'drag-prev');
+				}
 			});
 
 			// Activate new drag nodes
-			elements.forEach((el) => {
+			allPoints.forEach((el) => {
 				const node = s.nodeStates[el.id] || { interaction: 'ready' };
-				s.nodeStates[el.id] = transition(node, 'active');
+				s.nodeStates[el.id] = transition(
+					{ ...node, previousInteraction: node.interaction },
+					'active'
+				);
 			});
 
 			s.draggedNodes = newIds;
 			return s;
 		});
-	}
+	};
 
-	function endDrag() {
+	const endDrag = () => {
 		update((s) => {
 			s.draggedNodes?.forEach((id) => {
 				const node = s.nodeStates[id];
 				if (!node) return;
-				s.nodeStates[id] = transition(node, 'inactive');
+				s.nodeStates[id] = {
+					...node,
+					interaction: node.previousInteraction === 'hint' ? 'hint' : 'inactive',
+					previousInteraction: undefined,
+					dragging: false
+				};
 			});
 
-			// Clean up old drag-prev states
+			// Reset lingering drag-prev nodes
 			Object.values(s.nodeStates).forEach((node) => {
 				if (node.interaction === 'drag-prev')
 					node.interaction = node.previousInteraction === 'hint' ? 'hint' : 'inactive';
@@ -159,96 +189,108 @@ export const uiStore = (() => {
 			s.draggedNodes = new Set();
 			return s;
 		});
-	}
+	};
 
-	function setHints(hintIds: string[]) {
+	const setHints = (hintIds: string[]) => {
 		update((s) => {
-			// Reset all previous hints to ready
-			for (const [id, node] of Object.entries(s.nodeStates)) {
+			// Clear old hints
+			Object.entries(s.nodeStates).forEach(([id, node]) => {
 				if (node.interaction === 'hint') s.nodeStates[id] = transition(node, 'ready');
-			}
-
+			});
 			// Apply new hints
-			for (const id of hintIds) {
-				if (!s.nodeStates[id]) s.nodeStates[id] = { interaction: 'ready' };
-				s.nodeStates[id] = transition(s.nodeStates[id], 'hint');
-			}
-
+			hintIds.forEach((id) => updateNode(id, 'hint'));
 			return s;
 		});
-	}
+	};
+
+	// --- Note helpers ---
+	const changeNotes = (noteIds: string | string[], type: 'play' | 'add' | 'stop') => {
+		const ids = Array.isArray(noteIds) ? noteIds : [noteIds];
+		update((state) => {
+			const newState = { ...state };
+
+			if (type === 'play') {
+				// Reset all active notes
+				Object.keys(newState.nodeStates).forEach((id) => {
+					if (newState.nodeStates[id].interaction === 'active') {
+						newState.nodeStates[id] = {
+							...newState.nodeStates[id],
+							interaction: newState.nodeStates[id].previousInteraction || 'ready',
+							previousInteraction: undefined
+						};
+					}
+				});
+			}
+
+			if (type === 'stop') {
+				(ids.length === 0 ? Object.keys(newState.nodeStates) : ids).forEach((id) => {
+					const node = newState.nodeStates[id];
+					if (node?.interaction === 'active')
+						newState.nodeStates[id] = {
+							...node,
+							interaction: node.previousInteraction || 'ready',
+							previousInteraction: undefined
+						};
+				});
+			} else {
+				// Add or play notes
+				ids.forEach((id) => {
+					const node = newState.nodeStates[id];
+					newState.nodeStates[id] = node
+						? { ...node, interaction: 'active', previousInteraction: node.interaction }
+						: { interaction: 'active' };
+				});
+			}
+
+			return newState;
+		});
+	};
 
 	// --- Mouse/keyboard handlers ---
-	function handleMouseDown(el: ElementRef) {
+	const handleElementMouse = (el: ElementRef, action: 'down' | 'enter' | 'leave') => {
 		const { shiftPressed } = get(uiStore).context;
-		if (shiftPressed) {
-			if (el.type === 'point') togglePoint(el.id);
-			else if (el.type === 'triangle') toggleTriangle(el.id);
-		} else {
-			if (el.type === 'point') startDrag(el);
-			else if (el.type === 'triangle') {
-				const tri = gridStore.getTriangleById(el.id);
-				if (tri) startDrag(tri.points.map((id) => ({ id, type: 'point' })));
-			}
-		}
-	}
-
-	function handleMouseEnter(el: ElementRef) {
-		if (!get(uiStore).context.dragging) return;
-		const targets =
-			el.type === 'point'
-				? [el]
-				: (gridStore.getTriangleById(el.id)?.points.map((id) => ({ id, type: 'point' })) ?? []);
-		updateDrag(targets);
-	}
-
-	function handleMouseLeave(el: ElementRef) {
-		if (!get(uiStore).context.dragging) return;
-		const targets =
-			el.type === 'point'
-				? [el]
-				: (gridStore.getTriangleById(el.id)?.points.map((id) => ({ id, type: 'point' })) ?? []);
-		updateDrag(targets);
-	}
-
-	function handleMouseUp() {
-		if (get(uiStore).context.dragging) {
-			endDrag();
-			update((s) => ({ ...s, context: { ...s.context, dragging: false } }));
-		}
-	}
-
-	function handleKeyDown(e: KeyboardEvent) {
-		update((s) => {
-			if (e.key === 'Shift') s.context.shiftPressed = true;
-			if (e.key === 'Escape') {
-				for (const id of Object.keys(s.nodeStates))
-					s.nodeStates[id] = transition(s.nodeStates[id], 'ready');
-			}
-			return s;
-		});
-	}
-
-	function handleKeyUp(e: KeyboardEvent) {
-		if (e.key === 'Shift')
-			update((s) => ({ ...s, context: { ...s.context, shiftPressed: false } }));
-	}
+		const points = expandToPoints(el);
+		if (action === 'down') {
+			if (shiftPressed) el.type === 'point' ? toggleElement(el.id) : toggleTriangle(el.id);
+			else startDrag(points);
+		} else if (action === 'enter' || action === 'leave') updateDrag(points);
+	};
 
 	return {
 		subscribe,
 		reset: () => set(initialState),
-		setInteraction,
+		setInteraction: updateNode,
 		setHints,
 		startDrag,
 		updateDrag,
 		endDrag,
 		togglePoint,
 		toggleTriangle,
-		handleMouseDown,
-		handleMouseEnter,
-		handleMouseLeave,
-		handleMouseUp,
-		handleKeyDown,
-		handleKeyUp
+		handleMouseDown: (el: ElementRef) => handleElementMouse(el, 'down'),
+		handleMouseEnter: (el: ElementRef) => handleElementMouse(el, 'enter'),
+		handleMouseLeave: (el: ElementRef) => handleElementMouse(el, 'leave'),
+		handleMouseUp: () => {
+			if (get(uiStore).context.dragging) {
+				endDrag();
+				update((s) => ({ ...s, context: { ...s.context, dragging: false } }));
+			}
+		},
+		handleKeyDown: (e: KeyboardEvent) => {
+			update((s) => {
+				if (e.key === 'Shift') s.context.shiftPressed = true;
+				if (e.key === 'Escape')
+					Object.keys(s.nodeStates).forEach(
+						(id) => (s.nodeStates[id] = transition(s.nodeStates[id], 'ready'))
+					);
+				return s;
+			});
+		},
+		handleKeyUp: (e: KeyboardEvent) => {
+			if (e.key === 'Shift')
+				update((s) => ({ ...s, context: { ...s.context, shiftPressed: false } }));
+		},
+		addNotes: (ids: string | string[]) => changeNotes(ids, 'add'),
+		removeNotes: (ids?: string | string[]) => changeNotes(ids || [], 'stop'),
+		playNotes: (ids: string | string[]) => changeNotes(ids, 'play')
 	};
 })();
