@@ -143,7 +143,7 @@
 
 				<div>
 					<h3>Active Notes</h3>
-					<pre>{activeNotes.size > 0 ? activeNotesJSON : ''}</pre>
+					<pre>{activeNotes.size > 0 ? activeNotesJSON : '[ ]'}</pre>
 				</div>
 			</div>
 		{/if}
