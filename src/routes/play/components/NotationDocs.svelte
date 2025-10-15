@@ -29,19 +29,7 @@
 	export let defaultFilter: string = '';
 	export let searchSuggestions = ['individualNotes'];
 
-	// Constants
-	const FALLBACK_CODES: Record<string, string> = {
-		staff4Lines: 'e01a',
-		staff5Lines: 'e014',
-		note16thUp: '1D161',
-		space: 'e020'
-	};
-
-
-	// Search state
 	let searchQuery = '';
-	$: normalizedSearchQuery = searchQuery.toLowerCase().trim();
-	$: normalizedDefaultFilter = defaultFilter.toLowerCase().trim();
 
 	// Pure utility functions
 	const parseHex = (str: string): number => parseInt(str.replace('U+', ''), 16);
@@ -55,71 +43,27 @@
 	const getGlyphDescription = (glyphName: string): string =>
 		data?.glyphnames?.[glyphName]?.description || '';
 
-	const findGlyphByName = (glyphName: string): { codePoint: string; range: string } | null => {
-		if (!data?.ranges) return null;
-
-		for (const [rangeKey, range] of Object.entries(data.ranges)) {
-			const index = range.glyphs.indexOf(glyphName);
-			if (index !== -1) {
-				const codePoint = getCodePointHex(range.range_start, index).replace('U+', '');
-				return { codePoint, range: rangeKey };
-			}
-		}
-		return null;
-	};
-
-	const getGlyphHtmlEntity = (glyphName: string): string => {
-		const glyph = findGlyphByName(glyphName);
-		if (!glyph) {
-			const fallbackCode = FALLBACK_CODES[glyphName];
-			return fallbackCode ? `&#x${fallbackCode};` : '';
-		}
-		return `&#x${glyph.codePoint};`;
-	};
-
-	// Filtering functions
 	const matchesSearchTerm = (text: string, query: string): boolean =>
 		text.toLowerCase().includes(query.toLowerCase().trim());
 
-	const rangeMatchesQuery = (
-		rangeKey: string,
-		range: RangeData,
-		normalizedQuery: string,
-		isDefaultFilter: boolean = false
-	): boolean => {
-		return (
-			matchesSearchTerm(rangeKey, normalizedQuery) ||
-			matchesSearchTerm(range.description, normalizedQuery)
-		);
-	};
+	const rangeMatchesQuery = (rangeKey: string, range: RangeData, query: string): boolean =>
+		matchesSearchTerm(rangeKey, query) || matchesSearchTerm(range.description, query);
 
-	const glyphMatchesQuery = (
-		glyphName: string,
-		normalizedQuery: string,
-		range: RangeData,
-		isDefaultFilter: boolean = false
-	): boolean => {
-		// Match by name
-		if (matchesSearchTerm(glyphName, normalizedQuery)) return true;
+	const glyphMatchesQuery = (glyphName: string, query: string, range: RangeData): boolean => {
+		if (matchesSearchTerm(glyphName, query)) return true;
 
-		// Match by description
 		const description = getGlyphDescription(glyphName);
-		if (description && matchesSearchTerm(description, normalizedQuery)) return true;
+		if (description && matchesSearchTerm(description, query)) return true;
 
-		// Match by codepoint
 		const index = range.glyphs.indexOf(glyphName);
 		if (index !== -1) {
 			const codePoint = getCodePointHex(range.range_start, index);
-			if (matchesSearchTerm(codePoint, normalizedQuery)) return true;
+			if (matchesSearchTerm(codePoint, query)) return true;
 		}
 
 		return false;
 	};
 
-	// The filterGlyphs function has been removed as we're now using if blocks in the template
-	// to conditionally show/hide glyphs based on search criteria
-
-	// Create glyph info objects for rendering
 	const createGlyphInfo = (
 		glyphName: string,
 		rangeKey: string,
@@ -137,60 +81,54 @@
 		};
 	};
 
-	// Event handlers
-	const handleSearch = (event: Event): void => {
-		event.preventDefault();
+	// Filter ranges based on query
+	const filterRanges = (ranges: Record<string, RangeData>, query: string) => {
+		if (!query) return ranges;
+
+		return Object.fromEntries(
+			Object.entries(ranges).filter(([key, range]) => {
+				const rangeMatches = rangeMatchesQuery(key, range, query);
+				const hasMatchingGlyphs = range.glyphs.some((glyph) =>
+					glyphMatchesQuery(glyph, query, range)
+				);
+				return rangeMatches || hasMatchingGlyphs;
+			})
+		);
 	};
 
-	const setSearchQuery = (query: string): void => {
-		searchQuery = query;
+	// Count glyphs in ranges
+	const countGlyphs = (ranges: Record<string, RangeData>) =>
+		Object.values(ranges).reduce((sum, range) => sum + range.glyphs.length, 0);
+
+	// Count filtered glyphs (respects search within ranges)
+	const countFilteredGlyphs = (
+		ranges: Record<string, RangeData>,
+		searchQuery: string
+	): number => {
+		if (!searchQuery) return countGlyphs(ranges);
+
+		return Object.entries(ranges).reduce((sum, [key, range]) => {
+			const rangeMatches = rangeMatchesQuery(key, range, searchQuery);
+			const matchingCount = range.glyphs.filter(
+				(glyph) => rangeMatches || glyphMatchesQuery(glyph, searchQuery, range)
+			).length;
+			return sum + matchingCount;
+		}, 0);
 	};
 
-	// Reactive declarations
-	// We're no longer using filterGlyphs and displayRanges since we're using if blocks in the template
-	// Calculate counts using reduce for more functional approach
-	$: totalGlyphCount = data?.ranges
-		? Object.values(data.ranges).reduce((sum, range) => sum + range.glyphs.length, 0)
-		: 0;
-
-	// First filter by default filter if present
+	// Reactive declarations - optimized chain
+	$: normalizedSearchQuery = searchQuery.toLowerCase().trim();
+	$: normalizedDefaultFilter = defaultFilter.toLowerCase().trim();
+	$: totalGlyphCount = data?.ranges ? countGlyphs(data.ranges) : 0;
 	$: defaultFilteredRanges = data?.ranges
-		? Object.fromEntries(
-				Object.entries(data.ranges).filter(([key, range]) => {
-					// If no default filter, include all ranges
-					if (!normalizedDefaultFilter) return true;
-
-					// Check if range matches default filter
-					const rangeMatches = rangeMatchesQuery(key, range, normalizedDefaultFilter, true);
-
-					// Check if any glyphs in the range match default filter
-					const hasMatchingGlyphs = range.glyphs.some((glyph) =>
-						glyphMatchesQuery(glyph, normalizedDefaultFilter, range, true)
-					);
-
-					return rangeMatches || hasMatchingGlyphs;
-				})
-			)
+		? filterRanges(data.ranges, normalizedDefaultFilter)
 		: {};
+	$: defaultFilteredGlyphCount = countGlyphs(defaultFilteredRanges);
+	$: filteredGlyphCount = countFilteredGlyphs(defaultFilteredRanges, normalizedSearchQuery);
 
-	$: defaultFilteredGlyphCount = defaultFilteredRanges
-		? Object.values(defaultFilteredRanges).reduce((sum, range) => sum + range.glyphs.length, 0)
-		: 0;
-
-	$: filteredGlyphCount =
-		normalizedSearchQuery && defaultFilteredRanges
-			? Object.entries(defaultFilteredRanges).reduce((sum, [key, range]) => {
-					const rangeMatches = rangeMatchesQuery(key, range, normalizedSearchQuery);
-					const glyphInfos = range.glyphs.map((glyph, i) => ({ name: glyph }));
-					const matchingGlyphsCount = glyphInfos.filter(
-						(glyph) =>
-							!normalizedSearchQuery ||
-							rangeMatches ||
-							glyphMatchesQuery(glyph.name, normalizedSearchQuery, range)
-					).length;
-					return sum + matchingGlyphsCount;
-				}, 0)
-			: defaultFilteredGlyphCount;
+	// Event handlers
+	const handleSearch = (e: Event) => e.preventDefault();
+	const setSearchQuery = (query: string) => (searchQuery = query);
 </script>
 
 <!-- Search Form Component -->
@@ -202,7 +140,9 @@
 	/>
 	<button type="submit">Search</button>
 	{#if searchQuery.trim()}
-		<button type="button" class="clear-button" on:click={() => setSearchQuery('')}> Clear </button>
+		<button type="button" class="clear-button" on:click={() => setSearchQuery('')}>
+			Clear
+		</button>
 	{/if}
 </form>
 
@@ -251,15 +191,13 @@
 			? rangeMatchesQuery(key, range, normalizedSearchQuery)
 			: true}
 
-		<!-- Only show the section if there's no search or if the range/glyphs match -->
-		{#if !normalizedSearchQuery || rangeMatches || glyphInfos.some( (glyph) => glyphMatchesQuery(glyph.name, normalizedSearchQuery, range) )}
+		{#if !normalizedSearchQuery || rangeMatches || glyphInfos.some((glyph) => glyphMatchesQuery(glyph.name, normalizedSearchQuery, range))}
 			<section class="range-section">
 				<h3 class="range-title">{range.description}</h3>
 				<p class="range-description">{key}</p>
 
 				<dl class="glyph-list">
 					{#each glyphInfos as glyph}
-						<!-- Only show the glyph if there's no search, the range matches, or the glyph matches -->
 						{#if !normalizedSearchQuery || rangeMatches || glyphMatchesQuery(glyph.name, normalizedSearchQuery, range)}
 							<div class="glyph-entry">
 								<span class="glyph-symbol smuFL">{@html glyph.symbol}</span>
