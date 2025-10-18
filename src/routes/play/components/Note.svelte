@@ -1,15 +1,17 @@
 <script lang="ts">
+	import { useNotePosition, determineStemDirection } from './note/note-position.svelte';
+	import { useNoteGlyph } from './note/note-glyph.svelte';
+
 	type NoteType = {
-		note: string;
+		note?: string;
 		type: string;
-		duration: string;
+		duration?: string;
 		y?: number;
 		pitch?: string;
-	};
-
-	type GlyphInfo = {
-		codePoint: string;
-		range: string;
+		entity?: string;
+		numerator?: number;
+		denominator?: number;
+		lyric?: string;
 	};
 
 	type SMUFLData = {
@@ -31,7 +33,7 @@
 		note,
 		staff,
 		data = null,
-		fontSize = 70, // Default font size in px
+		fontSize = 70,
 		variant = '',
 		hideNoteName = false,
 		transpose = 0
@@ -47,367 +49,145 @@
 		transpose?: number;
 	} = $props();
 
-	const STAFF_LINE_SPACING_RATIO = 9 / 70; // Original spacing (9px) / Original font size (70px)
-	const STEM_REQUIRING_DURATIONS = ['Half', 'Quarter', '8th', '16th', '32nd', '64th'];
-	const BOTTOM_LEDGER_THRESHOLD = -1;
-	const TOP_LEDGER_THRESHOLD = 9;
-	const MUSICAL_LETTER_SEQUENCE = ['E', 'F', 'G', 'A', 'B', 'C', 'D'];
-	const REFERENCE_PITCH_POSITION = -3;
-	const REFERENCE_OCTAVE = 4;
-	const STEM_DIRECTION_BOUNDARY = 4;
-	const EMERGENCY_GLYPH_CODES: Record<string, string> = {
-		staff4Lines: 'e01a',
-		staff5Lines: 'e014',
-		note16thUp: '1D161',
-		space: 'e020',
-		staff1Line: 'e010'
-	};
+	// Use composable utilities for clean separation of concerns
+	const {
+		staffLineSpacing,
+		yPosition,
+		verticalPixelOffset,
+		ledgerLineDetails,
+		displayPitch,
+		isBassNote,
+		isTrebleNote
+	} = useNotePosition(note, transpose, fontSize);
 
-	function convertUnicodeHexToNumber(hexString: string): number {
-		return parseInt(hexString.replace('U+', ''), 16);
-	}
+	const { getGlyph, buildNoteName } = useNoteGlyph(data);
 
-	function createUnicodePointFromBase(baseCodePoint: string, glyphOffset: number): string {
-		return (
-			'U+' + (convertUnicodeHexToNumber(baseCodePoint) + glyphOffset).toString(16).toUpperCase()
-		);
-	}
-
-	function countVisibleLedgerLines(totalLines: number): number {
-		return Math.floor(totalLines / 2) + (totalLines % 2);
-	}
-
-	function requiresStem(noteType: string, noteDuration: string): boolean {
-		return STEM_REQUIRING_DURATIONS.includes(noteDuration) && noteType === 'note';
-	}
-
-	function determineStemDirection(verticalPosition: number): 'Up' | 'Down' {
-		return verticalPosition < STEM_DIRECTION_BOUNDARY ? 'Up' : 'Down';
-	}
-
-	function deriveMusicalLetter(verticalPosition: number): string {
-		const letterIndex = ((verticalPosition % 7) + 7) % 7;
-		return MUSICAL_LETTER_SEQUENCE[letterIndex];
-	}
-
-	function calculateOctaveShift(verticalPosition: number): number {
-		return Math.floor((verticalPosition - REFERENCE_PITCH_POSITION) / 7);
-	}
-
-	function formatPitchNotation(letter: string, octaveShift: number): string {
-		const actualOctave = REFERENCE_OCTAVE + octaveShift;
-		return `${letter}${letter === 'A' ? actualOctave + 1 : actualOctave}`;
-	}
-
-	function deriveVerticalPositionFromPitch(pitch: string): number {
-		if (!pitch) return 0;
-
-		// Extract letter and octave from pitch
-		const letter = pitch.charAt(0).toUpperCase() as 'C' | 'D' | 'E' | 'F' | 'G' | 'A' | 'B';
-		const octave = parseInt(pitch.substring(1));
-
-		// Looking at the notes array, we need this exact mapping:
-		// A4 -> undefined (should be -4 based on sequence)
-		// B4 -> -3
-		// C4 -> -2
-		// D4 -> -1
-		// E4 -> 0
-		// F4 -> 1
-		// G4 -> 2
-
-		// Create a direct mapping for octave 4
-		if (octave === 4) {
-			switch (letter) {
-				case 'A':
-					return -4;
-				case 'B':
-					return -3;
-				case 'C':
-					return -2;
-				case 'D':
-					return -1;
-				case 'E':
-					return 0;
-				case 'F':
-					return 1;
-				case 'G':
-					return 2;
-				default:
-					return 0;
-			}
-		}
-
-		// For other octaves, calculate the offset
-		// First get the base position for octave 4
-		let basePosition;
-		switch (letter) {
-			case 'A':
-				basePosition = -4;
-				break;
-			case 'B':
-				basePosition = -3;
-				break;
-			case 'C':
-				basePosition = -2;
-				break;
-			case 'D':
-				basePosition = -1;
-				break;
-			case 'E':
-				basePosition = 0;
-				break;
-			case 'F':
-				basePosition = 1;
-				break;
-			case 'G':
-				basePosition = 2;
-				break;
-			default:
-				basePosition = 0;
-		}
-
-		// Calculate position based on octave (7 steps per octave)
-		return basePosition + (octave - 4) * 7;
-	}
-
-	function locateGlyphInMetadata(glyphName: string): GlyphInfo | null {
-		if (!data || !data.ranges) {
-			return null;
-		}
-
-		for (const [rangeKey, range] of Object.entries(data.ranges)) {
-			const glyphIndex = range.glyphs.indexOf(glyphName);
-			if (glyphIndex !== -1) {
-				const codePoint = createUnicodePointFromBase(range.range_start, glyphIndex).replace(
-					'U+',
-					''
-				);
-				return { codePoint, range: rangeKey };
-			}
-		}
-
-		return null;
-	}
-
-	function createHtmlEntityForGlyph(glyphName: string): string {
-		const glyphInfo = locateGlyphInMetadata(glyphName);
-		if (!glyphInfo) {
-			const emergencyCode = EMERGENCY_GLYPH_CODES[glyphName];
-			if (emergencyCode) {
-				return `&#x${emergencyCode};`;
-			}
-			return '';
-		}
-		return `&#x${glyphInfo.codePoint};`;
-	}
-
-	function countRequiredLedgerLines(
-		needsLedgerLines: boolean,
-		verticalPosition: number,
-		thresholdPosition: number
-	): number {
-		return needsLedgerLines ? Math.abs(verticalPosition - thresholdPosition) : 0;
-	}
-
-	function derivePitchInformation(verticalPosition?: number): { pitch: string } {
-		if (verticalPosition === undefined) {
-			return { pitch: '' };
-		}
-
-		const letter = deriveMusicalLetter(verticalPosition);
-		const octaveShift = calculateOctaveShift(verticalPosition);
-		const pitch = letter ? formatPitchNotation(letter, octaveShift) : '';
-
-		return { pitch };
-	}
-
-	function buildGlyphName(
-		noteType: string,
-		noteDuration: string,
-		verticalPosition?: number
-	): string {
-		const needsStem = requiresStem(noteType, noteDuration);
-		const stemDirection =
-			verticalPosition !== undefined ? determineStemDirection(verticalPosition) : 'Up';
-		return noteType + noteDuration + (needsStem ? stemDirection : '');
-	}
-
-	function analyzeLedgerLineRequirements(verticalPosition?: number) {
-		if (verticalPosition === undefined) {
-			return {
-				showLower: false,
-				showUpper: false,
-				lowerCount: 0,
-				upperCount: 0
-			};
-		}
-
-		const needsLowerLedgers = verticalPosition < BOTTOM_LEDGER_THRESHOLD;
-		const needsUpperLedgers = verticalPosition > TOP_LEDGER_THRESHOLD;
-
-		const rawLowerCount = needsLowerLedgers
-			? Math.abs(verticalPosition - BOTTOM_LEDGER_THRESHOLD)
-			: 0;
-		const rawUpperCount = needsUpperLedgers ? Math.abs(verticalPosition - TOP_LEDGER_THRESHOLD) : 0;
-
-		const visibleLowerCount = countVisibleLedgerLines(rawLowerCount);
-		const visibleUpperCount = countVisibleLedgerLines(rawUpperCount);
-
-		return {
-			showLower: needsLowerLedgers,
-			showUpper: needsUpperLedgers,
-			lowerCount: visibleLowerCount,
-			upperCount: visibleUpperCount
-		};
-	}
-
-	// Calculate staff line spacing based on current font size
-	const staffLineSpacing = $derived(fontSize * STAFF_LINE_SPACING_RATIO);
-
-	// Calculate y position from pitch if not provided, or use pitch from y if pitch not provided
-	const yPosition = $derived(
-		(note.y !== undefined ? note.y : note.pitch ? deriveVerticalPositionFromPitch(note.pitch) : 0) +
-			(note.type === 'note' ? transpose : 0)
-	);
-	// Calculate vertical position in pixels based on dynamic font size
-	const verticalPixelOffset = $derived(-yPosition * staffLineSpacing);
-	const glyphName = $derived(buildGlyphName(note.type, note.duration, yPosition));
-	const ledgerLineDetails = $derived(analyzeLedgerLineRequirements(yPosition));
-	// Calculate pitch from y if not provided
-	const displayPitch = $derived(
-		note.pitch || (note.y !== undefined ? derivePitchInformation(note.y).pitch : '')
-	);
-
+	// Derived values
 	const normalVariant = $derived(variant !== 'single' && variant !== 'dual');
 
-	const isBassNote = $derived(yPosition > 9);
-	const isTrebleNote = $derived(yPosition < -2);
+	const stemDirection = $derived(determineStemDirection(yPosition));
+
+	const glyphName = $derived(
+		buildNoteName(note.type, note.duration || '', yPosition, stemDirection)
+	);
 
 	const hideNote = $derived(
 		note.type === 'note' && thoroughbass && ((isBass && isBassNote) || (!isBass && isTrebleNote))
 	);
-
-	// console.log(note.pitch, yPosition, isBass ? 'bass' : 'treble', hideNote);
 </script>
+
+{#snippet ledgerLine(position: number, type: 'upper' | 'lower')}
+	<div class="ledger-line {type} noselect {hideNote ? 'hide' : ''}" style="top: {position}px">
+		{@html getGlyph('staff1Line')}
+	</div>
+{/snippet}
+
+{#snippet staffLine(glyphName: string, className: string = '')}
+	<div class="stave {className} noselect" unselectable="on">
+		{@html getGlyph(glyphName)}
+	</div>
+{/snippet}
+
+{#snippet noteRenderer(glyphName: string, offset: number, hidden: boolean = false)}
+	<div class="note {hidden ? 'hide' : ''}" style="top: {offset}px">
+		{@html getGlyph(glyphName)}
+	</div>
+{/snippet}
 
 <div class="stave-note">
 	<div class="note-wrapper">
 		<div class="note-container">
+			<!-- Variant-specific staff lines -->
 			{#if variant === 'dual'}
-				<div class="stave ledger-line upper noselect" style="top: {staffLineSpacing * 3 * 2}px">
-					{@html createHtmlEntityForGlyph('staff1Line')}
-				</div>
-
+				{@render staffLine('staff1Line', 'ledger-line upper')}
 				<div class="stave ledger-line upper noselect" style="top: {staffLineSpacing * 6 * 2}px">
-					{@html createHtmlEntityForGlyph('staff1Line')}
+					{@html getGlyph('staff1Line')}
 				</div>
 			{/if}
 
 			{#if variant === 'single'}
 				<div class="stave ledger-line upper noselect" style="top: {staffLineSpacing * 4.5 * 2}px">
-					{@html createHtmlEntityForGlyph('staff1Line')}
+					{@html getGlyph('staff1Line')}
 				</div>
 			{/if}
 
+			<!-- Main staff -->
 			{#if staff && normalVariant}
-				<div class="stave noselect" unselectable="on">
-					{@html createHtmlEntityForGlyph(staff + 'Wide')}
-				</div>
+				{@render staffLine(staff + 'Wide')}
 			{/if}
 
+			<!-- Note type renderers -->
 			{#if note.type === 'note'}
-				<div class="note {hideNote ? 'hide' : ''}" style="top: {verticalPixelOffset}px">
-					{@html createHtmlEntityForGlyph(glyphName)}
-				</div>
+				{@render noteRenderer(glyphName, verticalPixelOffset, hideNote)}
 			{/if}
 
-			{#if note.type === 'clef'}
-				<div class="note {hideNote ? 'hide' : ''}" style="top: {verticalPixelOffset}px">
-					{@html createHtmlEntityForGlyph(note.entity)}
-				</div>
+			{#if note.type === 'clef' && note.entity}
+				{@render noteRenderer(note.entity, verticalPixelOffset, hideNote)}
 			{/if}
 
-			{#if note.type === 'chant'}
-				<div class="note" style="top: {verticalPixelOffset}px">
-					{@html createHtmlEntityForGlyph(note.duration)}
-				</div>
+			{#if note.type === 'chant' && note.duration}
+				{@render noteRenderer(note.duration, verticalPixelOffset)}
 			{/if}
 
-			{#if note.type === 'any'}
-				<div class="note" style="top: {verticalPixelOffset}px">
-					{@html createHtmlEntityForGlyph(note.entity)}
-				</div>
+			{#if note.type === 'any' && note.entity}
+				{@render noteRenderer(note.entity, verticalPixelOffset)}
 			{/if}
 
-			{#if note.type === 'barline'}
-				<div class="note" style="top: {verticalPixelOffset}px">
-					{@html createHtmlEntityForGlyph('barline' + note.duration)}
-				</div>
+			{#if note.type === 'barline' && note.duration}
+				{@render noteRenderer('barline' + note.duration, verticalPixelOffset)}
 			{/if}
 
-			{#if note.type === 'timeSig'}
+			{#if note.type === 'timeSig' && note.numerator && note.denominator}
 				<div class="timesig">
-					<div class=" numerator" style="top: {verticalPixelOffset + staffLineSpacing * -4}px">
-						{@html createHtmlEntityForGlyph('timeSig' + note.numerator)}
+					<div class="numerator" style="top: {verticalPixelOffset + staffLineSpacing * -4}px">
+						{@html getGlyph('timeSig' + note.numerator)}
 					</div>
-					<div class=" denominator" style="top: {verticalPixelOffset}px">
-						{@html createHtmlEntityForGlyph('timeSig' + note.denominator)}
+					<div class="denominator" style="top: {verticalPixelOffset}px">
+						{@html getGlyph('timeSig' + note.denominator)}
 					</div>
 				</div>
 			{/if}
 
-			{#if note.type === 'rest'}
-				<div class="note" style="top: {verticalPixelOffset}px">
-					{@html createHtmlEntityForGlyph('rest' + note.duration)}
-				</div>
+			{#if note.type === 'rest' && note.duration}
+				{@render noteRenderer('rest' + note.duration, verticalPixelOffset)}
 			{/if}
 
+			<!-- Ledger lines -->
 			{#if ledgerLineDetails.showLower && note.type === 'note'}
-				{#each Array.from({ length: ledgerLineDetails.lowerCount }) as _index, index}
-					<div
-						class="ledger-line lower noselect {hideNote ? 'hide' : ''}"
-						style="top: {staffLineSpacing * (index + 0.5) * 2}px"
-					>
-						{@html createHtmlEntityForGlyph('staff1Line')}
-					</div>
+				{#each Array.from({ length: ledgerLineDetails.lowerCount }) as _, index}
+					{@render ledgerLine(staffLineSpacing * (index + 0.5) * 2, 'lower')}
 				{/each}
 			{/if}
 
 			{#if ledgerLineDetails.showUpper && note.type === 'note'}
-				{#each Array.from({ length: ledgerLineDetails.upperCount }) as _index, index}
-					<div
-						class="ledger-line upper noselect {hideNote ? 'hide' : ''}"
-						style="top: {staffLineSpacing * -(index + 0.5) * 2}px"
-					>
-						{@html createHtmlEntityForGlyph('staff1Line')}
-					</div>
+				{#each Array.from({ length: ledgerLineDetails.upperCount }) as _, index}
+					{@render ledgerLine(staffLineSpacing * -(index + 0.5) * 2, 'upper')}
 				{/each}
 			{/if}
+
+			<!-- Note metadata -->
 			{#if note.type === 'note' && !hideNoteName}
-				<div class="note-name">
-					{displayPitch}
-				</div>
+				<div class="note-name">{displayPitch}</div>
 			{/if}
 
-			{#if note.lyric?.length > 0 && !hideNoteName}
-				<div class="note-lyric">
-					{note.lyric}
-				</div>
+			{#if note.lyric && !hideNoteName}
+				<div class="note-lyric">{note.lyric}</div>
 			{/if}
 		</div>
 	</div>
 
+	<!-- Staff gaps -->
 	{#if !data?.ranges?.beamedGroupsOfNotes?.glyphs?.includes(note.note)}
 		<div class="gap noselect">
 			<div style="visibility: {normalVariant ? 'visible' : 'hidden'}">
-				{@html createHtmlEntityForGlyph(staff + 'Narrow')}
+				{@html getGlyph(staff + 'Narrow')}
 			</div>
 		</div>
 
 		{#if note.type === 'timeSig'}
 			<div class="gap noselect">
 				<div style="visibility: {normalVariant ? 'visible' : 'hidden'}">
-					{@html createHtmlEntityForGlyph(staff + 'Wide')}
+					{@html getGlyph(staff + 'Wide')}
 				</div>
 			</div>
 		{/if}
