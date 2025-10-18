@@ -25,15 +25,27 @@
 		};
 	};
 
-	export let thoroughbass: boolean = false;
-	export let isBass: boolean = false;
-	export let note: NoteType;
-	export let staff: string;
-	export let data: SMUFLData | null = null;
-	export let fontSize: number = 70; // Default font size in px
-	export let variant: string;
-	export let hideNoteName: boolean = false;
-	export let transpose: number = 0;
+	let {
+		thoroughbass = false,
+		isBass = false,
+		note,
+		staff,
+		data = null,
+		fontSize = 70, // Default font size in px
+		variant = '',
+		hideNoteName = false,
+		transpose = 0
+	}: {
+		thoroughbass?: boolean;
+		isBass?: boolean;
+		note: NoteType;
+		staff: string;
+		data?: SMUFLData | null;
+		fontSize?: number;
+		variant?: string;
+		hideNoteName?: boolean;
+		transpose?: number;
+	} = $props();
 
 	const STAFF_LINE_SPACING_RATIO = 9 / 70; // Original spacing (9px) / Original font size (70px)
 	const STEM_REQUIRING_DURATIONS = ['Half', 'Quarter', '8th', '16th', '32nd', '64th'];
@@ -250,29 +262,32 @@
 	}
 
 	// Calculate staff line spacing based on current font size
-	$: staffLineSpacing = fontSize * STAFF_LINE_SPACING_RATIO;
+	const staffLineSpacing = $derived(fontSize * STAFF_LINE_SPACING_RATIO);
 
 	// Calculate y position from pitch if not provided, or use pitch from y if pitch not provided
-	$: yPosition =
+	const yPosition = $derived(
 		(note.y !== undefined ? note.y : note.pitch ? deriveVerticalPositionFromPitch(note.pitch) : 0) +
-		(note.type === 'note' ? transpose : 0);
+			(note.type === 'note' ? transpose : 0)
+	);
 	// Calculate vertical position in pixels based on dynamic font size
-	$: verticalPixelOffset = -yPosition * staffLineSpacing;
-	$: glyphName = buildGlyphName(note.type, note.duration, yPosition);
-	$: ledgerLineDetails = analyzeLedgerLineRequirements(yPosition);
+	const verticalPixelOffset = $derived(-yPosition * staffLineSpacing);
+	const glyphName = $derived(buildGlyphName(note.type, note.duration, yPosition));
+	const ledgerLineDetails = $derived(analyzeLedgerLineRequirements(yPosition));
 	// Calculate pitch from y if not provided
-	$: displayPitch =
-		note.pitch || (note.y !== undefined ? derivePitchInformation(note.y).pitch : '');
+	const displayPitch = $derived(
+		note.pitch || (note.y !== undefined ? derivePitchInformation(note.y).pitch : '')
+	);
 
-	$: normalVariant = variant !== 'single' && variant !== 'dual';
+	const normalVariant = $derived(variant !== 'single' && variant !== 'dual');
 
-	$: isBassNote = yPosition > 9;
-	$: isTrebleNote = yPosition < -2;
+	const isBassNote = $derived(yPosition > 9);
+	const isTrebleNote = $derived(yPosition < -2);
 
-	$: hideNote =
-		note.type === 'note' && thoroughbass && ((isBass && isBassNote) || (!isBass && isTrebleNote));
+	const hideNote = $derived(
+		note.type === 'note' && thoroughbass && ((isBass && isBassNote) || (!isBass && isTrebleNote))
+	);
 
-	// $: console.log(note.pitch, yPosition, isBass ? 'bass' : 'treble', hideNote);
+	// console.log(note.pitch, yPosition, isBass ? 'bass' : 'treble', hideNote);
 </script>
 
 <div class="stave-note">

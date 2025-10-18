@@ -11,6 +11,15 @@
 		metadata: null
 	});
 
+	const info = {
+		title: 'Twinkle Twinkle Little Star',
+		subtitle: 'A simple melody using modern staff notation',
+		timeSignature: { numerator: 4, denominator: 4 },
+		fontSize: 50,
+		staff: 'staff5Lines',
+		clef: 'gClef'
+	};
+
 	let error = $state<string | null>(null);
 
 	let mozartTwinkle = [
@@ -80,16 +89,7 @@
 		<p class="text-red-600">Error: {error}</p>
 	{:else}
 		<div class="harmonic-block">
-			<Staff
-				title="Twinkle Twinkle Little Star"
-				subtitle="A simple melody using modern staff notation"
-				timeSignature={{ numerator: 4, denominator: 4 }}
-				fontSize={50}
-				notes={mozartTwinkle}
-				{data}
-				staff="staff5Lines"
-				clef="gClef"
-			/>
+			<Staff notes={mozartTwinkle} {data} {info} />
 		</div>
 	{/if}
 </div>

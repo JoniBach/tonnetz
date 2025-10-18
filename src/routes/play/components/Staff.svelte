@@ -2,23 +2,31 @@
 	import Note from './Note.svelte';
 
 	type NoteType = {
-		note: string;
+		note?: string;
 		type: string;
-		duration: string;
+		duration?: string;
 		y?: number;
 		pitch?: string;
+		entity?: string;
+		numerator?: number;
+		denominator?: number;
+		lyric?: string;
 	};
 
-	export let notes: NoteType[];
-	export let staff: string;
-	export let fontSize: number = 70; // Default font size, can be overridden by parent
-	export let title: string;
-	export let subtitle: string;
-	export let variant: string;
-	export let thoroughbass: boolean = false;
-	export let timeSignature;
-	export let clef;
-	export let data: {
+	type StaffInfo = {
+		title?: string;
+		subtitle?: string;
+		fontSize: number;
+		staff: string;
+		clef?: boolean | string;
+		timeSignature?: {
+			numerator: number;
+			denominator: number;
+		};
+		variant?: string;
+	};
+
+	type SMuFLData = {
 		ranges: Record<
 			string,
 			{
@@ -29,106 +37,116 @@
 		metadata?: {
 			glyphAdvanceWidths?: Record<string, number>;
 		};
-	} | null = null;
+	} | null;
 
-	export let transpose: number = 0;
+	let {
+		info,
+		notes,
+		thoroughbass = false,
+		data = null
+	}: {
+		info: StaffInfo;
+		notes: NoteType[];
+		thoroughbass?: boolean;
+		data?: SMuFLData;
+	} = $props();
 </script>
 
 <div class="sheet-music">
-	<div class="title">
-		<h2>{title}</h2>
-		<h3>{subtitle}</h3>
-	</div>
-	<div class="smuFL score" style="font-size: {fontSize}px;">
-		{#if clef}
+	{#if info.title || info.subtitle}
+		<div class="title">
+			{#if info.title}
+				<h2>{info.title}</h2>
+			{/if}
+			{#if info.subtitle}
+				<h3>{info.subtitle}</h3>
+			{/if}
+		</div>
+	{/if}
+	<div class="smuFL score" style="font-size: {info.fontSize}px;">
+		{#if info.clef && !thoroughbass}
 			<Note
 				note={{
-					// note: 'noteDoubleWhole',
 					type: 'clef',
 					entity: 'gClef',
 					pitch: 'G4'
-				}}
+				} as any}
 				{data}
-				{staff}
-				{fontSize}
+				staff={info.staff}
+				fontSize={info.fontSize}
+				variant={info.variant || ''}
 				isBass={false}
 			/>
 		{/if}
 
-		{#if thoroughbass}
+		{#if thoroughbass && info.clef}
 			<div class="stave-note">
 				<Note
 					note={{
-						// note: 'noteDoubleWhole',
 						type: 'clef',
 						entity: 'gClef',
 						pitch: 'G4'
-					}}
+					} as any}
 					{data}
-					{staff}
-					{fontSize}
+					staff={info.staff}
+					fontSize={info.fontSize}
+					variant={info.variant || ''}
 					isBass={false}
 				/>
-				{#if thoroughbass}
-					<Note
-						note={{
-							// note: 'noteDoubleWhole',
-							type: 'clef',
-							entity: 'fClef',
-							pitch: 'D5'
-						}}
-						{data}
-						{staff}
-						{fontSize}
-						{variant}
-						transpose={12}
-						{thoroughbass}
-						isBass
-					/>
-				{/if}
+				<Note
+					note={{
+						type: 'clef',
+						entity: 'fClef',
+						pitch: 'F3'
+					} as any}
+					{data}
+					staff={info.staff}
+					fontSize={info.fontSize}
+					variant={info.variant || ''}
+					transpose={12}
+					{thoroughbass}
+					isBass
+				/>
 			</div>
-			<Note
-				note={{
-					// note: 'noteDoubleWhole',
-					type: 'clef',
-					entity: clef,
-					pitch: 'G4'
-				}}
-				{data}
-				{staff}
-				{fontSize}
-				isBass={false}
-			/>
 		{/if}
-		{#if timeSignature}
+		{#if info.timeSignature}
 			<Note
 				note={{
-					// note: 'noteDoubleWhole',
 					type: 'timeSig',
-					numerator: timeSignature.numerator,
-					denominator: timeSignature.denominator,
+					numerator: info.timeSignature.numerator,
+					denominator: info.timeSignature.denominator,
 					pitch: 'G4'
-				}}
+				} as any}
 				{data}
-				{staff}
-				{fontSize}
+				staff={info.staff}
+				fontSize={info.fontSize}
+				variant={info.variant || ''}
 				isBass={false}
 			/>
 		{/if}
 		{#each notes as note}
 			<div class="stave-note">
 				<Note
-					{note}
+					note={note as any}
 					{data}
-					{staff}
-					{fontSize}
-					{variant}
+					staff={info.staff}
+					fontSize={info.fontSize}
+					variant={info.variant || ''}
 					hideNoteName={thoroughbass}
 					{thoroughbass}
 					isBass={false}
 				/>
 				{#if thoroughbass}
-					<Note {note} {data} {staff} {fontSize} {variant} transpose={12} {thoroughbass} isBass />
+					<Note
+						note={note as any}
+						{data}
+						staff={info.staff}
+						fontSize={info.fontSize}
+						variant={info.variant || ''}
+						transpose={12}
+						{thoroughbass}
+						isBass
+					/>
 				{/if}
 			</div>
 		{/each}
