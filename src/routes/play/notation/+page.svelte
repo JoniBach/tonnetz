@@ -31,10 +31,9 @@
 				ranges: await rangesRes.json(),
 				metadata: await metadataRes.json()
 			};
-
 		} catch (err) {
 			error = err.message;
-		} 
+		}
 	});
 
 	let searchSuggestions = [
@@ -50,7 +49,7 @@
 
 <div class="content">
 	<h1>Modern Staff Notation: Precision in Music</h1>
-		<Documentation {data} {searchSuggestions} />
+	<Documentation {data} {searchSuggestions} />
 </div>
 
 <style>
