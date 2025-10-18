@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import Staff from '../components/Staff.svelte';
+	import type { MidiData } from '../components/types/midi-types';
 
 	let loading = $state(true);
 
@@ -11,48 +12,80 @@
 		metadata: null
 	});
 
-	const info = {
-		title: 'Twinkle Twinkle Little Star',
+	let error = $state<string | null>(null);
+
+	// MIDI-compatible data structure
+	const midiData: MidiData = {
+		header: {
+			PPQ: 192,
+			bpm: 120,
+			timeSignature: [4, 4],
+			name: 'Twinkle Twinkle Little Star'
+		},
+		tempo: [
+			{
+				absoluteTime: 0,
+				seconds: 0,
+				bpm: 120
+			}
+		],
+		timeSignature: [
+			{
+				absoluteTime: 0,
+				seconds: 0,
+				numerator: 4,
+				denominator: 4,
+				click: 24,
+				notesQ: 8
+			}
+		],
+		startTime: 0,
+		duration: 8.0, // 8 seconds total
+		tracks: [
+			{
+				startTime: 0,
+				duration: 8.0,
+				length: 14,
+				id: 0,
+				name: 'Melody',
+				instrument: 'Piano',
+				channel: 0,
+				controlChanges: {},
+				notes: [
+					// Bar 1: C C G G
+					{ name: 'C4', midi: 60, time: 0.0, velocity: 0.8, duration: 0.5, lyric: 'Twin' },
+					{ name: 'C4', midi: 60, time: 0.5, velocity: 0.8, duration: 0.5, lyric: 'kle' },
+					{ name: 'G4', midi: 67, time: 1.0, velocity: 0.8, duration: 0.5, lyric: 'twin' },
+					{ name: 'G4', midi: 67, time: 1.5, velocity: 0.8, duration: 0.5, lyric: 'kle' },
+
+					// Bar 2: A A G (half note)
+					{ name: 'A4', midi: 69, time: 2.0, velocity: 0.8, duration: 0.5, lyric: 'lit' },
+					{ name: 'A4', midi: 69, time: 2.5, velocity: 0.8, duration: 0.5, lyric: 'tle' },
+					{ name: 'G4', midi: 67, time: 3.0, velocity: 0.8, duration: 1.0, lyric: 'star' },
+
+					// Bar 3: F F E E
+					{ name: 'F4', midi: 65, time: 4.0, velocity: 0.8, duration: 0.5, lyric: 'How' },
+					{ name: 'F4', midi: 65, time: 4.5, velocity: 0.8, duration: 0.5, lyric: 'I' },
+					{ name: 'E4', midi: 64, time: 5.0, velocity: 0.8, duration: 0.5, lyric: 'won' },
+					{ name: 'E4', midi: 64, time: 5.5, velocity: 0.8, duration: 0.5, lyric: 'der' },
+
+					// Bar 4: D D C (half note)
+					{ name: 'D4', midi: 62, time: 6.0, velocity: 0.8, duration: 0.5, lyric: 'what' },
+					{ name: 'D4', midi: 62, time: 6.5, velocity: 0.8, duration: 0.5, lyric: 'you' },
+					{ name: 'C4', midi: 60, time: 7.0, velocity: 0.8, duration: 1.0, lyric: 'are' }
+				]
+			}
+		]
+	};
+
+	// Staff configuration - now using MIDI-native format!
+	const staffConfig = {
+		title: midiData.header.name,
 		subtitle: 'A simple melody using modern staff notation',
-		timeSignature: { numerator: 4, denominator: 4 },
 		fontSize: 50,
 		staff: 'staff5Lines',
 		clef: 'gClef'
 	};
-
-	let error = $state<string | null>(null);
-
-	let mozartTwinkle = [
-		{ type: 'barline', duration: 'Single' },
-
-		// Bar 1: C C G G
-		{ type: 'note', duration: 'Quarter', pitch: 'C4', lyric: 'Twin' },
-		{ type: 'note', duration: 'Quarter', pitch: 'C4', lyric: 'kle' },
-		{ type: 'note', duration: 'Quarter', pitch: 'G4', lyric: 'twin' },
-		{ type: 'note', duration: 'Quarter', pitch: 'G4', lyric: 'kle' },
-		{ type: 'barline', duration: 'Single' },
-
-		// Bar 2: A A G (half note)
-		{ type: 'note', duration: 'Quarter', pitch: 'A5', lyric: 'lit' },
-		{ type: 'note', duration: 'Quarter', pitch: 'A5', lyric: 'tle' },
-		{ type: 'note', duration: 'Half', pitch: 'G4', lyric: 'star' },
-
-		{ type: 'barline', duration: 'Single' },
-
-		// Bar 3: F F E E
-		{ type: 'note', duration: 'Quarter', pitch: 'F4', lyric: 'How' },
-		{ type: 'note', duration: 'Quarter', pitch: 'F4', lyric: 'I' },
-		{ type: 'note', duration: 'Quarter', pitch: 'E4', lyric: 'won' },
-		{ type: 'note', duration: 'Quarter', pitch: 'E4', lyric: 'der' },
-		{ type: 'barline', duration: 'Single' },
-
-		// Bar 4: D D C (half note)
-		{ type: 'note', duration: 'Quarter', pitch: 'D4', lyric: 'what' },
-		{ type: 'note', duration: 'Quarter', pitch: 'D4', lyric: 'you' },
-		{ type: 'note', duration: 'Half', pitch: 'C4', lyric: 'are' },
-
-		{ type: 'barline', duration: 'Final' }
-	];
 
 	onMount(async () => {
 		try {
@@ -89,7 +122,7 @@
 		<p class="text-red-600">Error: {error}</p>
 	{:else}
 		<div class="harmonic-block">
-			<Staff notes={mozartTwinkle} {data} {info} />
+			<Staff {midiData} trackIndex={0} config={staffConfig} {data} />
 		</div>
 	{/if}
 </div>

@@ -1,30 +1,7 @@
 <script lang="ts">
 	import Note from './Note.svelte';
-
-	type NoteType = {
-		note?: string;
-		type: string;
-		duration?: string;
-		y?: number;
-		pitch?: string;
-		entity?: string;
-		numerator?: number;
-		denominator?: number;
-		lyric?: string;
-	};
-
-	type StaffInfo = {
-		title?: string;
-		subtitle?: string;
-		fontSize: number;
-		staff: string;
-		clef?: boolean | string;
-		timeSignature?: {
-			numerator: number;
-			denominator: number;
-		};
-		variant?: string;
-	};
+	import type { MidiData, StaffConfig } from './types/midi-types';
+	import { convertMidiToNotation } from './utils/midi-to-notation';
 
 	type SMuFLData = {
 		ranges: Record<
@@ -40,46 +17,60 @@
 	} | null;
 
 	let {
-		info,
-		notes,
+		midiData,
+		trackIndex = 0,
+		config,
 		thoroughbass = false,
 		data = null
 	}: {
-		info: StaffInfo;
-		notes: NoteType[];
+		midiData: MidiData;
+		trackIndex?: number;
+		config: StaffConfig;
 		thoroughbass?: boolean;
 		data?: SMuFLData;
 	} = $props();
+
+	// Convert MIDI data to renderable notation elements
+	const notationElements = $derived(convertMidiToNotation(midiData, trackIndex));
+
+	// Extract time signature from MIDI data
+	const timeSignature = $derived(
+		midiData.timeSignature[0] || {
+			numerator: midiData.header.timeSignature[0],
+			denominator: midiData.header.timeSignature[1]
+		}
+	);
 </script>
 
 <div class="sheet-music">
-	{#if info.title || info.subtitle}
+	{#if config.title || config.subtitle}
 		<div class="title">
-			{#if info.title}
-				<h2>{info.title}</h2>
+			{#if config.title}
+				<h2>{config.title}</h2>
 			{/if}
-			{#if info.subtitle}
-				<h3>{info.subtitle}</h3>
+			{#if config.subtitle}
+				<h3>{config.subtitle}</h3>
 			{/if}
 		</div>
 	{/if}
-	<div class="smuFL score" style="font-size: {info.fontSize}px;">
-		{#if info.clef && !thoroughbass}
+	<div class="smuFL score" style="font-size: {config.fontSize}px;">
+		<!-- Clef -->
+		{#if config.clef && !thoroughbass}
 			<Note
 				note={{
 					type: 'clef',
-					entity: 'gClef',
+					entity: typeof config.clef === 'string' ? config.clef : 'gClef',
 					pitch: 'G4'
 				} as any}
 				{data}
-				staff={info.staff}
-				fontSize={info.fontSize}
-				variant={info.variant || ''}
+				staff={config.staff}
+				fontSize={config.fontSize}
+				variant={config.variant || ''}
 				isBass={false}
 			/>
 		{/if}
 
-		{#if thoroughbass && info.clef}
+		{#if thoroughbass && config.clef}
 			<div class="stave-note">
 				<Note
 					note={{
@@ -88,9 +79,9 @@
 						pitch: 'G4'
 					} as any}
 					{data}
-					staff={info.staff}
-					fontSize={info.fontSize}
-					variant={info.variant || ''}
+					staff={config.staff}
+					fontSize={config.fontSize}
+					variant={config.variant || ''}
 					isBass={false}
 				/>
 				<Note
@@ -100,55 +91,83 @@
 						pitch: 'F3'
 					} as any}
 					{data}
-					staff={info.staff}
-					fontSize={info.fontSize}
-					variant={info.variant || ''}
+					staff={config.staff}
+					fontSize={config.fontSize}
+					variant={config.variant || ''}
 					transpose={12}
 					{thoroughbass}
 					isBass
 				/>
 			</div>
 		{/if}
-		{#if info.timeSignature}
+
+		<!-- Time Signature -->
+		{#if timeSignature}
 			<Note
 				note={{
 					type: 'timeSig',
-					numerator: info.timeSignature.numerator,
-					denominator: info.timeSignature.denominator,
+					numerator: timeSignature.numerator,
+					denominator: timeSignature.denominator,
 					pitch: 'G4'
 				} as any}
 				{data}
-				staff={info.staff}
-				fontSize={info.fontSize}
-				variant={info.variant || ''}
+				staff={config.staff}
+				fontSize={config.fontSize}
+				variant={config.variant || ''}
 				isBass={false}
 			/>
 		{/if}
-		{#each notes as note}
-			<div class="stave-note">
+
+		<!-- Render notation elements (notes and barlines) -->
+		{#each notationElements as element}
+			{#if element.type === 'note'}
+				<div class="stave-note">
+					<Note
+						note={{
+							type: 'note',
+							duration: element.duration,
+							pitch: element.pitch,
+							lyric: element.lyric
+						} as any}
+						{data}
+						staff={config.staff}
+						fontSize={config.fontSize}
+						variant={config.variant || ''}
+						hideNoteName={thoroughbass}
+						{thoroughbass}
+						isBass={false}
+					/>
+					{#if thoroughbass}
+						<Note
+							note={{
+								type: 'note',
+								duration: element.duration,
+								pitch: element.pitch,
+								lyric: element.lyric
+							} as any}
+							{data}
+							staff={config.staff}
+							fontSize={config.fontSize}
+							variant={config.variant || ''}
+							transpose={12}
+							{thoroughbass}
+							isBass
+						/>
+					{/if}
+				</div>
+			{:else if element.type === 'barline'}
 				<Note
-					note={note as any}
+					note={{
+						type: 'barline',
+						duration: element.style === 'single' ? 'Single' : element.style === 'double' ? 'Double' : element.style === 'final' ? 'Final' : 'Single'
+					} as any}
 					{data}
-					staff={info.staff}
-					fontSize={info.fontSize}
-					variant={info.variant || ''}
-					hideNoteName={thoroughbass}
-					{thoroughbass}
+					staff={config.staff}
+					fontSize={config.fontSize}
+					variant={config.variant || ''}
 					isBass={false}
 				/>
-				{#if thoroughbass}
-					<Note
-						note={note as any}
-						{data}
-						staff={info.staff}
-						fontSize={info.fontSize}
-						variant={info.variant || ''}
-						transpose={12}
-						{thoroughbass}
-						isBass
-					/>
-				{/if}
-			</div>
+			{/if}
 		{/each}
 	</div>
 </div>
